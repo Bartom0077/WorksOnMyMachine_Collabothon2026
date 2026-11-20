@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 
@@ -10,7 +11,12 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps({"service": SERVICE, "error": "not found"}).encode()
             self._send(404, body)
             return
-        body = json.dumps({"service": SERVICE, "status": "ok"}).encode()
+        body = json.dumps({
+            "service": SERVICE,
+            "status": "ok",
+            "message": "Backend odpowiada",
+            "time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }).encode()
         self._send(200, body)
 
     def _send(self, code, body):
