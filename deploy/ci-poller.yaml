@@ -40,7 +40,8 @@ metadata:
   name: autonomous-cfo-ci-state
   namespace: autonomous-cfo
 data:
-  sha: none
+  frontend-sha: none
+  backend-sha: none
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -55,52 +56,64 @@ data:
     API=https://kubernetes.default.svc
     TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
     CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-    GH=https://api.github.com/repos/Bartom0077/WorksOnMyMachine_Collabothon2026/commits/main
-
-    BODY=$(curl -fsS -H "Accept: application/vnd.github+json" -H "User-Agent: autonomous-cfo-ci" "$GH")
-    SHA=$(printf '%s' "$BODY" | grep -o '"sha"[[:space:]]*:[[:space:]]*"[0-9a-f]\{40\}"' | head -1 | grep -o '[0-9a-f]\{40\}')
-    if [ -z "${SHA}" ]; then
-      echo "could not read main sha"
-      exit 0
-    fi
-    echo "remote ${SHA}"
+    REPO=https://api.github.com/repos/Bartom0077/WorksOnMyMachine_Collabothon2026/commits
 
     STATE=$(curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" \
       "${API}/api/v1/namespaces/${NS}/configmaps/autonomous-cfo-ci-state")
-    LAST=$(printf '%s' "$STATE" | grep -o '"sha"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
-    echo "last ${LAST}"
-    if [ "$SHA" = "$LAST" ]; then
-      echo "no change"
-      exit 0
-    fi
 
-    RESP=$(curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      -X POST "${API}/apis/build.openshift.io/v1/namespaces/${NS}/buildconfigs/autonomous-cfo/instantiate" \
-      -d '{"apiVersion":"build.openshift.io/v1","kind":"BuildRequest","metadata":{"name":"autonomous-cfo"}}')
-    BUILD=$(printf '%s' "$RESP" | grep -o '"name"[[:space:]]*:[[:space:]]*"autonomous-cfo-[0-9][0-9]*"' | head -1 | grep -o 'autonomous-cfo-[0-9][0-9]*')
-    echo "started ${BUILD}"
+    build_if_changed() {
+      local key="$1"
+      local path="$2"
+      local bc="$3"
+      local body sha last resp build phase one
+      body=$(curl -fsS -H "Accept: application/vnd.github+json" -H "User-Agent: autonomous-cfo-ci" \
+        "${REPO}?path=${path}&sha=main&per_page=1" || true)
+      sha=$(printf '%s' "$body" | grep -o '"sha"[[:space:]]*:[[:space:]]*"[0-9a-f]\{40\}"' | head -1 | grep -o '[0-9a-f]\{40\}' || true)
+      if [ -z "${sha}" ]; then
+        echo "${key}: no commits yet"
+        return 0
+      fi
+      last=$(printf '%s' "$STATE" | grep -o "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/.*"\([^"]*\)"$/\1/' || true)
+      echo "${key} remote ${sha}"
+      echo "${key} last ${last}"
+      if [ "$sha" = "$last" ]; then
+        echo "${key}: no change"
+        return 0
+      fi
 
-    PHASE=""
-    for _ in $(seq 1 60); do
-      sleep 5
-      ONE=$(curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" \
-        "${API}/apis/build.openshift.io/v1/namespaces/${NS}/builds/${BUILD}")
-      PHASE=$(printf '%s' "$ONE" | grep -o '"phase"[[:space:]]*:[[:space:]]*"[A-Za-z]*"' | head -1 | sed 's/.*"\([A-Za-z]*\)"$/\1/')
-      echo "phase ${PHASE}"
-      case "$PHASE" in
-        Complete) break ;;
-        Failed|Error|Cancelled) exit 1 ;;
-      esac
-    done
-    if [ "$PHASE" != "Complete" ]; then
-      echo "build timed out"
-      exit 1
-    fi
+      resp=$(curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+        -X POST "${API}/apis/build.openshift.io/v1/namespaces/${NS}/buildconfigs/${bc}/instantiate" \
+        -d "{\"apiVersion\":\"build.openshift.io/v1\",\"kind\":\"BuildRequest\",\"metadata\":{\"name\":\"${bc}\"}}")
+      build=$(printf '%s' "$resp" | grep -o "\"name\"[[:space:]]*:[[:space:]]*\"${bc}-[0-9][0-9]*\"" | head -1 | grep -o "${bc}-[0-9][0-9]*")
+      echo "${key} started ${build}"
 
-    curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/merge-patch+json" \
-      -X PATCH "${API}/api/v1/namespaces/${NS}/configmaps/autonomous-cfo-ci-state" \
-      -d "{\"data\":{\"sha\":\"${SHA}\"}}" >/dev/null
-    echo "recorded ${SHA}"
+      phase=""
+      for _ in $(seq 1 60); do
+        sleep 5
+        one=$(curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" \
+          "${API}/apis/build.openshift.io/v1/namespaces/${NS}/builds/${build}")
+        phase=$(printf '%s' "$one" | grep -o '"phase"[[:space:]]*:[[:space:]]*"[A-Za-z]*"' | head -1 | sed 's/.*"\([A-Za-z]*\)"$/\1/')
+        echo "${key} phase ${phase}"
+        case "$phase" in
+          Complete) break ;;
+          Failed|Error|Cancelled) return 1 ;;
+        esac
+      done
+      if [ "$phase" != "Complete" ]; then
+        echo "${key} build timed out"
+        return 1
+      fi
+
+      curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/merge-patch+json" \
+        -X PATCH "${API}/api/v1/namespaces/${NS}/configmaps/autonomous-cfo-ci-state" \
+        -d "{\"data\":{\"${key}\":\"${sha}\"}}" >/dev/null
+      echo "${key} recorded ${sha}"
+    }
+
+    fail=0
+    build_if_changed frontend-sha frontend autonomous-cfo || fail=1
+    build_if_changed backend-sha backend autonomous-cfo-backend || fail=1
+    exit "$fail"
 ---
 apiVersion: batch/v1
 kind: CronJob

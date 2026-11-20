@@ -1,0 +1,119 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: autonomous-cfo-backend
+  namespace: autonomous-cfo
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: autonomous-cfo-backend
+  namespace: autonomous-cfo
+  labels:
+    app: autonomous-cfo-backend
+spec:
+  failedBuildsHistoryLimit: 3
+  successfulBuildsHistoryLimit: 3
+  output:
+    to:
+      kind: ImageStreamTag
+      name: autonomous-cfo-backend:latest
+  source:
+    type: Git
+    git:
+      uri: https://github.com/Bartom0077/WorksOnMyMachine_Collabothon2026.git
+      ref: main
+    contextDir: backend
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: DockerImage
+        name: registry.access.redhat.com/ubi9/python-312:latest
+  triggers: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomous-cfo-backend
+  namespace: autonomous-cfo
+  labels:
+    app: autonomous-cfo-backend
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"autonomous-cfo-backend:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"backend\")].image"}]'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autonomous-cfo-backend
+  template:
+    metadata:
+      labels:
+        app: autonomous-cfo-backend
+    spec:
+      containers:
+        - name: backend
+          image: image-registry.openshift-image-registry.svc:5000/autonomous-cfo/autonomous-cfo-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomous-cfo-backend
+  namespace: autonomous-cfo
+  labels:
+    app: autonomous-cfo-backend
+spec:
+  selector:
+    app: autonomous-cfo-backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: autonomous-cfo-backend
+  namespace: autonomous-cfo
+  labels:
+    app: autonomous-cfo-backend
+spec:
+  to:
+    kind: Service
+    name: autonomous-cfo-backend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
