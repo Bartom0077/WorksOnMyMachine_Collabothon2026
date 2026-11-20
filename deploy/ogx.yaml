@@ -1,0 +1,65 @@
+# OGX server (formerly Llama Stack) in front of the vLLM model "cfo-llm".
+# Prerequisite: OGX operator enabled in the DataScienceCluster — see docs/ogx-setup.md.
+# Apply:  oc apply -f deploy/ogx-base-config.yaml -f deploy/ogx.yaml
+#
+# Field names come from the upstream operator API reference (ogx.io/v1beta1, main branch).
+# The operator shipped with OpenShift AI 3.5.3 may differ slightly: if `oc apply` rejects a field,
+# check it with `oc explain ogxserver.spec --recursive` and adjust.
+---
+# OpenShift fills this ConfigMap with the service CA (key: service-ca.crt).
+# The model endpoint serves HTTPS with a certificate signed by that CA.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ogx-service-ca
+  namespace: autonomous-cfo
+  labels:
+    ogx.io/watch: "true"
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
+---
+apiVersion: ogx.io/v1beta1
+kind: OGXServer
+metadata:
+  name: cfo-ogx
+  namespace: autonomous-cfo          # same namespace as the backend: the default NetworkPolicy only admits it
+spec:
+  distribution:
+    name: rh                         # this operator offers: rh (rh-dev is deprecated)
+  baseConfig:                        # from deploy/ogx-base-config.yaml; avoids the registry lookup that fails with 401
+    name: cfo-ogx-base-config
+    key: config.yaml
+  storage:                           # must be set: the base config defaults to PostgreSQL
+    kv:
+      type: sqlite
+    sql:
+      type: sqlite
+  providers:
+    inference:
+      remote:
+        vllm:
+          - id: vllm-cfo
+            endpoint: https://cfo-llm-kserve-workload-svc.cfo-models.svc.cluster.local:8000/v1
+  resources:
+    models:
+      - name: cfo-llm                # served model name reported by vLLM /v1/models
+        provider: vllm-cfo
+        modelType: llm
+        contextLength: 16384         # matches --max-model-len on the model
+  # Do not disable vector_io: the built-in file-search tool depends on it and the server will not start.
+  tls:
+    trust:
+      caCertificates:
+        - name: ogx-service-ca
+          key: service-ca.crt
+  workload:
+    replicas: 1
+    storage:
+      size: 5Gi                      # SQLite state (responses, conversations) on a PVC
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
