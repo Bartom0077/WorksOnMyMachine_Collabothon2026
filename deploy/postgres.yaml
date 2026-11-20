@@ -1,0 +1,109 @@
+# PostgreSQL 16 for Autonomous CFO — database "amalfi"
+# Apply:  oc apply -n autonomous-cfo -f deploy/postgres.yaml
+# In-cluster connection: postgresql://amalfi:<password>@amalfi-db:5432/amalfi
+apiVersion: v1
+kind: Secret
+metadata:
+  name: amalfi-db
+  labels:
+    app: amalfi-db
+type: Opaque
+stringData:
+  database-name: amalfi
+  database-user: amalfi
+  database-password: change-me-amalfi   # hackathon default — change before sharing the cluster
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: amalfi-db-data
+  labels:
+    app: amalfi-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amalfi-db
+  labels:
+    app: amalfi-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: amalfi-db
+  template:
+    metadata:
+      labels:
+        app: amalfi-db
+    spec:
+      containers:
+        - name: postgresql
+          # Public sclorg image (same as the Red Hat one); runs fine under OpenShift's restricted SCC
+          image: quay.io/sclorg/postgresql-16-c9s:latest
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef: { name: amalfi-db, key: database-name }
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef: { name: amalfi-db, key: database-user }
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: amalfi-db, key: database-password }
+          readinessProbe:
+            exec:
+              command: ["/usr/libexec/check-container"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["/usr/libexec/check-container", "--live"]
+            initialDelaySeconds: 120
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: amalfi-db-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amalfi-db
+  labels:
+    app: amalfi-db
+spec:
+  selector:
+    app: amalfi-db
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
