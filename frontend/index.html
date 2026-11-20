@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autonomous - CFO</title>
+  <style>
+    :root {
+      --cb-yellow: #ffcc33;
+      --cb-green: #002e3c;
+      --cb-ink: #ffffff;
+      --cb-muted: #b7c6cc;
+      --cb-line: rgba(255, 255, 255, 0.14);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--cb-green);
+      color: var(--cb-ink);
+      font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    }
+
+    .stripe {
+      height: 10px;
+      background: var(--cb-yellow);
+    }
+
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 22px 8vw;
+      border-bottom: 1px solid var(--cb-line);
+    }
+
+    .mark {
+      width: 28px;
+      height: 28px;
+      background: var(--cb-yellow);
+      flex: 0 0 auto;
+    }
+
+    .wordmark {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      padding: 8vh 8vw 12vh;
+    }
+
+    h1 {
+      font-size: clamp(3rem, 8vw, 6.5rem);
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      line-height: 0.95;
+      color: var(--cb-ink);
+    }
+
+    .accent {
+      width: 112px;
+      height: 10px;
+      margin-top: 28px;
+      background: var(--cb-yellow);
+    }
+
+    footer {
+      padding: 18px 8vw 22px;
+      border-top: 1px solid var(--cb-line);
+      color: var(--cb-muted);
+      font-size: 13px;
+      letter-spacing: 0.02em;
+    }
+  </style>
+</head>
+<body>
+  <div class="stripe"></div>
+  <header class="top">
+    <div class="mark" aria-hidden="true"></div>
+    <div class="wordmark">Commerzbank</div>
+  </header>
+  <main>
+    <div>
+      <h1>Autonomous - CFO</h1>
+      <div class="accent"></div>
+    </div>
+  </main>
+  <footer>Autonomous - CFO</footer>
+</body>
+</html>

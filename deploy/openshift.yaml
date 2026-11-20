@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomous-cfo
+  labels:
+    app: autonomous-cfo
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"autonomous-cfo:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"nginx\")].image"}]'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autonomous-cfo
+  template:
+    metadata:
+      labels:
+        app: autonomous-cfo
+    spec:
+      containers:
+        - name: nginx
+          image: image-registry.openshift-image-registry.svc:5000/autonomous-cfo/autonomous-cfo:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomous-cfo
+  labels:
+    app: autonomous-cfo
+spec:
+  selector:
+    app: autonomous-cfo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: autonomous-cfo
+  labels:
+    app: autonomous-cfo
+spec:
+  to:
+    kind: Service
+    name: autonomous-cfo
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

@@ -1,0 +1,150 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-poller
+  namespace: autonomous-cfo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-poller
+  namespace: autonomous-cfo
+rules:
+  - apiGroups: ["build.openshift.io"]
+    resources: ["builds"]
+    verbs: ["get", "list"]
+  - apiGroups: ["build.openshift.io"]
+    resources: ["buildconfigs/instantiate"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-poller
+  namespace: autonomous-cfo
+subjects:
+  - kind: ServiceAccount
+    name: ci-poller
+    namespace: autonomous-cfo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ci-poller
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autonomous-cfo-ci-state
+  namespace: autonomous-cfo
+data:
+  sha: none
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autonomous-cfo-ci-script
+  namespace: autonomous-cfo
+data:
+  poll.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    NS=autonomous-cfo
+    API=https://kubernetes.default.svc
+    TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    GH=https://api.github.com/repos/Bartom0077/WorksOnMyMachine_Collabothon2026/commits/main
+
+    BODY=$(curl -fsS -H "Accept: application/vnd.github+json" -H "User-Agent: autonomous-cfo-ci" "$GH")
+    SHA=$(printf '%s' "$BODY" | grep -o '"sha"[[:space:]]*:[[:space:]]*"[0-9a-f]\{40\}"' | head -1 | grep -o '[0-9a-f]\{40\}')
+    if [ -z "${SHA}" ]; then
+      echo "could not read main sha"
+      exit 0
+    fi
+    echo "remote ${SHA}"
+
+    STATE=$(curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" \
+      "${API}/api/v1/namespaces/${NS}/configmaps/autonomous-cfo-ci-state")
+    LAST=$(printf '%s' "$STATE" | grep -o '"sha"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+    echo "last ${LAST}"
+    if [ "$SHA" = "$LAST" ]; then
+      echo "no change"
+      exit 0
+    fi
+
+    RESP=$(curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+      -X POST "${API}/apis/build.openshift.io/v1/namespaces/${NS}/buildconfigs/autonomous-cfo/instantiate" \
+      -d '{"apiVersion":"build.openshift.io/v1","kind":"BuildRequest","metadata":{"name":"autonomous-cfo"}}')
+    BUILD=$(printf '%s' "$RESP" | grep -o '"name"[[:space:]]*:[[:space:]]*"autonomous-cfo-[0-9][0-9]*"' | head -1 | grep -o 'autonomous-cfo-[0-9][0-9]*')
+    echo "started ${BUILD}"
+
+    PHASE=""
+    for _ in $(seq 1 60); do
+      sleep 5
+      ONE=$(curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" \
+        "${API}/apis/build.openshift.io/v1/namespaces/${NS}/builds/${BUILD}")
+      PHASE=$(printf '%s' "$ONE" | grep -o '"phase"[[:space:]]*:[[:space:]]*"[A-Za-z]*"' | head -1 | sed 's/.*"\([A-Za-z]*\)"$/\1/')
+      echo "phase ${PHASE}"
+      case "$PHASE" in
+        Complete) break ;;
+        Failed|Error|Cancelled) exit 1 ;;
+      esac
+    done
+    if [ "$PHASE" != "Complete" ]; then
+      echo "build timed out"
+      exit 1
+    fi
+
+    curl -fsS --cacert "$CA" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/merge-patch+json" \
+      -X PATCH "${API}/api/v1/namespaces/${NS}/configmaps/autonomous-cfo-ci-state" \
+      -d "{\"data\":{\"sha\":\"${SHA}\"}}" >/dev/null
+    echo "recorded ${SHA}"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: autonomous-cfo-ci
+  namespace: autonomous-cfo
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 600
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          serviceAccountName: ci-poller
+          restartPolicy: Never
+          containers:
+            - name: poll
+              image: registry.access.redhat.com/ubi9/ubi:latest
+              imagePullPolicy: IfNotPresent
+              command: ["bash", "/opt/ci/poll.sh"]
+              volumeMounts:
+                - name: script
+                  mountPath: /opt/ci
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+          volumes:
+            - name: script
+              configMap:
+                name: autonomous-cfo-ci-script
+                defaultMode: 420
