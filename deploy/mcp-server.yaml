@@ -1,0 +1,131 @@
+# Amalfi data MCP server (mcp_server/): read-only KPI + bank data tools for the CFO agent (OGX).
+# In-cluster endpoint for OGX:  http://amalfi-mcp.autonomous-cfo.svc.cluster.local:8080/mcp
+# No Route: the server is internal only. Local testing: oc port-forward svc/amalfi-mcp 18080:8080
+# Prereq: secret amalfi-mcp-db (bash db/setup_mcp_readonly_user.sh).
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: amalfi-mcp
+  namespace: autonomous-cfo
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: amalfi-mcp
+  namespace: autonomous-cfo
+  labels:
+    app: amalfi-mcp
+spec:
+  failedBuildsHistoryLimit: 3
+  successfulBuildsHistoryLimit: 3
+  output:
+    to:
+      kind: ImageStreamTag
+      name: amalfi-mcp:latest
+  source:
+    type: Git
+    git:
+      uri: https://github.com/Bartom0077/WorksOnMyMachine_Collabothon2026.git
+      ref: main
+    contextDir: mcp_server
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: DockerImage
+        name: registry.access.redhat.com/ubi9/python-312:latest
+  triggers: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amalfi-mcp
+  namespace: autonomous-cfo
+  labels:
+    app: amalfi-mcp
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"amalfi-mcp:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"mcp\")].image"}]'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: amalfi-mcp
+  template:
+    metadata:
+      labels:
+        app: amalfi-mcp
+    spec:
+      containers:
+        - name: mcp
+          image: image-registry.openshift-image-registry.svc:5000/autonomous-cfo/amalfi-mcp:latest
+          imagePullPolicy: Always
+          env:
+            - name: MCP_PORT
+              value: "8080"
+            # Optional server-wide cap on visible data; per-run cutoff comes from the X-As-Of-Date header.
+            - name: AMALFI_AS_OF_DATE
+              value: ""
+            - name: PGHOST
+              value: amalfi-db
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: amalfi-mcp-db
+                  key: database-name
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: amalfi-mcp-db
+                  key: database-user
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: amalfi-mcp-db
+                  key: database-password
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amalfi-mcp
+  namespace: autonomous-cfo
+  labels:
+    app: amalfi-mcp
+spec:
+  selector:
+    app: amalfi-mcp
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
