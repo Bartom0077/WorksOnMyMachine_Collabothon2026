@@ -55,6 +55,26 @@ spec:
         - name: backend
           image: image-registry.openshift-image-registry.svc:5000/autonomous-cfo/autonomous-cfo-backend:latest
           imagePullPolicy: Always
+          env:  # KPI engine DB connection (libpq PG* vars; values from the existing amalfi-db secret)
+            - name: PGHOST
+              value: amalfi-db
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: amalfi-db
+                  key: database-name
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: amalfi-db
+                  key: database-user
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: amalfi-db
+                  key: database-password
           ports:
             - name: http
               containerPort: 8080
