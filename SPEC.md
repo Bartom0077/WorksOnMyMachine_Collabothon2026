@@ -120,34 +120,64 @@ CREATE TABLE agent_proposals (
 
 ## 4. Deterministyczny Silnik KPI (Kontrakt Integracyjny)
 
-> **[PLACEHOLDER — DO UZUPEŁNIENIA Z OSOBNEGO PLIKU KPI]**  
-> W tym miejscu wkleimy dokładne wzory matematyczne i definicje wszystkich ustalonych KPI.
+> **Metodologia:** pełne definicje, wzory, założenia, progi statusów i obsługa braków danych dla 8 KPI są w pliku **[`KPI_SPEC.md`](KPI_SPEC.md)** (SSoT dla silnika KPI).
+> **Implementacja:** `backend/kpi_engine/` — punkt wejścia `run_kpi_engine(as_of_date)` / `python -m kpi_engine --as-of-date YYYY-MM-DD` (instrukcja: `backend/kpi_engine/README.md`).
+
+| # | KPI | Klucz(e) w `kpis` |
+|---|---|---|
+| 1 | Saldo bieżące | `current_cash_balance_eur` |
+| 2 | Prognoza salda 7/14/30 dni | `forecast_balance_7d_eur`, `forecast_balance_14d_eur`, `forecast_balance_30d_eur`, `forecast_min_balance_30d_eur` |
+| 3 | Minimalny bufor gotówki | `minimum_cash_buffer_eur` |
+| 4 | Luka płynności | `liquidity_gap_30d_eur`, `projected_overdraft_30d_eur` |
+| 5 | Nadwyżka do ulokowania | `deployable_cash_surplus_eur` |
+| 6 | Przepływ netto 7/30 dni | `net_cash_flow_7d_eur`, `net_cash_flow_30d_eur` |
+| 7 | Trend wpływów / wydatków | `cash_inflow_trend_pct`, `cash_outflow_trend_pct` |
+| 8 | Pokrycie kosztów stałych | `fixed_cost_coverage_ratio` |
+
+Dodatkowe tabele referencyjne (addytywne, `db/schema.sql` + `db/kpi_reference_data.sql`): `fixed_obligations` (harmonogram stałych zobowiązań z `Knowledge/`) oraz `account_balance_anchors` (udokumentowane salda — wyciąg nie zawiera salda).
 
 ### Kontrakt wyjściowy `metrics` (JSONB)
-Niezależnie od finalnej liczby KPI, skrypt przeliczający zapisuje wynik do `kpi_snapshots.metrics` w poniższej strukturze, z której korzystają Backend, Frontend i Agent AI:
+Skrypt przeliczający zapisuje (upsert po `snapshot_date`) wynik do `kpi_snapshots.metrics` w poniższej strukturze, z której korzystają Backend, Frontend i Agent AI (pełny opis: `KPI_SPEC.md` §3):
 
 ```json
 {
+  "schema_version": "1.0",
   "as_of_date": "2025-12-31",
   "currency": "EUR",
+  "overall_status": "HEALTHY",
   "kpis": {
-    "current_balance_eur": 82945.55,
-    "monthly_burn_rate_eur": 17730.00,
-    "cash_runway_days": 140,
-    "projected_30d_min_balance_eur": 65215.55,
-    "idle_cash_above_buffer_eur": 35485.55,
-    "monthly_chf_outflow": 4166.67
-    // ... pozostałe KPI z osobnego pliku
+    "current_cash_balance_eur": 33266.35,
+    "forecast_balance_7d_eur": 36217.57,
+    "forecast_balance_14d_eur": 41438.79,
+    "forecast_balance_30d_eur": 45620.15,
+    "forecast_min_balance_30d_eur": 30430.81,
+    "minimum_cash_buffer_eur": 22369.46,
+    "liquidity_gap_30d_eur": 0.00,
+    "projected_overdraft_30d_eur": 0.00,
+    "deployable_cash_surplus_eur": 8061.35,
+    "net_cash_flow_7d_eur": -4603.34,
+    "net_cash_flow_30d_eur": 9386.83,
+    "cash_inflow_trend_pct": -6.5,
+    "cash_outflow_trend_pct": -6.9,
+    "fixed_cost_coverage_ratio": 1.95
   },
   "kpi_metadata": [
     {
-      "id": "current_balance_eur",
+      "id": "current_cash_balance_eur",
+      "kpi_number": 1,
       "label": "Saldo bieżące (EUR)",
-      "value": 82945.55,
+      "label_en": "Current cash balance",
+      "value": 33266.35,
       "unit": "EUR",
-      "status": "HEALTHY" // "HEALTHY" | "WARNING" | "CRITICAL"
+      "status": "HEALTHY", // "HEALTHY" | "WARNING" | "CRITICAL"
+      "is_estimate": false,
+      "details": { }
     }
-  ]
+  ],
+  "forecast": { "daily": [ ], "sensitivity": { } },
+  "signals": { "scenario_hint": "OPTIMAL", "liquidity_shortage": { }, "excess_liquidity": { } },
+  "data_quality": { "status": "OK", "flags": [ ] },
+  "engine": { "name": "amalfi-kpi-engine", "version": "1.0.0" }
 }
 ```
 
@@ -162,10 +192,10 @@ Niezależnie od finalnej liczby KPI, skrypt przeliczający zapisuje wynik do `kp
 
 ### 5.2. Logika decyzyjna agenta
 * **Warunek A — Ryzyko utraty płynności (`LIQUIDITY_SHORTAGE`):**
-  * *Trigger:* Prognozowane saldo 30-dniowe lub `cash_runway_days` spada poniżej bezpiecznego progu (np. `< 30 dni` lub saldo poniżej sumy zobowiązań na kolejny miesiąc — jak w danych z czerwca 2025).
+  * *Trigger:* Prognozowane saldo 30-dniowe spada poniżej bezpiecznego bufora (`liquidity_gap_30d_eur > 0`, `signals.liquidity_shortage.detected`) lub `fixed_cost_coverage_ratio < 1.0` (saldo poniżej miesięcznej sumy zobowiązań stałych — jak w danych z czerwca 2025).
   * *Akcja:* Propozycja uruchomienia krótkoterminowej linii kredytowej (*Commerzbank Business Credit Line*) na kwotę pokrywającą deficyt + bufor bezpieczeństwa.
 * **Warunek B — Nadpłynność (`EXCESS_LIQUIDITY`):**
-  * *Trigger:* Wolne środki powyżej bufora bezpieczeństwa (`idle_cash_above_buffer_eur > 10 000 EUR` — jak w IV kwartale 2025).
+  * *Trigger:* Wolne środki powyżej bufora bezpieczeństwa (`deployable_cash_surplus_eur > 10 000 EUR`, `signals.excess_liquidity.detected`). Uwaga: na danych 2025 nadwyżka na 2025-12-31 wynosi 8 061,35 EUR (maks. w roku 9 443,26 EUR) — szczegóły i konsekwencje dla demo w `KPI_SPEC.md` §5.2.
   * *Akcja:* Propozycja alokacji 70% nadwyżki na 90-dniową lokatę terminową (*Fixed-Term Deposit*) lub fundusz rynku pieniężnego (*Money Market Fund*) z wyliczeniem szacowanego zysku odsetkowego.
 * **Warunek C — Brak konieczności działania (`OPTIMAL`):**
   * Gdy wskaźniki mieszczą się w bezpiecznych widełkach, agent nie tworzy zbędnych alertów (lub raportuje status stabilny).
@@ -179,8 +209,8 @@ Niezależnie od finalnej liczby KPI, skrypt przeliczający zapisuje wynik do `kp
   "plain_language_summary": "Twoje saldo operacyjne wynosi 82 945,55 EUR, co pokrywa ponad 4 miesiące stałych kosztów pizzerii. Przeniesienie części wolnych środków na 3-miesięczną lokatę pozwoli wypracować ok. 218 EUR bezpiecznego zysku bez naruszania poduszki finansowej.",
   "reasoning_details": {
     "triggered_kpis": [
-      { "name": "current_balance_eur", "value": 82945.55, "threshold": "> 45000.00" },
-      { "name": "cash_runway_days", "value": 140, "threshold": "> 60" }
+      { "name": "current_cash_balance_eur", "value": 82945.55, "threshold": "> 45000.00" },
+      { "name": "fixed_cost_coverage_ratio", "value": 4.6, "threshold": "> 2.0" }
     ],
     "safety_buffer_kept_eur": 57945.55
   },

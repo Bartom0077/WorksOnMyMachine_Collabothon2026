@@ -21,11 +21,12 @@ echo "==> Copying files into pod"
 oc exec -i -n "$NS" "$POD" -- sh -c 'cat > /tmp/statement.csv' < "$CSV"
 oc exec -i -n "$NS" "$POD" -- sh -c 'cat > /tmp/schema.sql' < db/schema.sql
 oc exec -i -n "$NS" "$POD" -- sh -c 'cat > /tmp/import_transactions.sql' < db/import_transactions.sql
+oc exec -i -n "$NS" "$POD" -- sh -c 'cat > /tmp/kpi_reference_data.sql' < db/kpi_reference_data.sql
 
-echo "==> Creating schema and importing transactions"
+echo "==> Creating schema, importing transactions and KPI reference data"
 # The app user owns the DB, so run as it (env vars come from the Secret).
 oc exec -n "$NS" "$POD" -- bash -c \
-  'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -h localhost -U "$POSTGRESQL_USER" -d "$POSTGRESQL_DATABASE" -v ON_ERROR_STOP=1 -f /tmp/schema.sql -f /tmp/import_transactions.sql'
+  'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -h localhost -U "$POSTGRESQL_USER" -d "$POSTGRESQL_DATABASE" -v ON_ERROR_STOP=1 -f /tmp/schema.sql -f /tmp/import_transactions.sql -f /tmp/kpi_reference_data.sql'
 
 echo "==> Done. Connect locally with:"
 echo "    oc port-forward -n $NS svc/amalfi-db 5432:5432"
