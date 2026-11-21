@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { approvedDecision, chatProposal, chatRemovalProposal, chatRemoved, greenDashboard } from "../fixtures/data";
+import { assistantPanel, assistantToggle, openAssistant } from "../fixtures/assistant";
 import { mockApi } from "../fixtures/mockApi";
 
 /** Design-review screenshots; only produced when SCREENSHOT_DIR is set. */
@@ -34,10 +35,23 @@ test.describe("screenshots", () => {
       await mockApi(page, { decisions: [approvedDecision], chatQueue: [chatProposal] });
       await page.goto("/");
       await expect(page.getByText("AI explanation", { exact: true })).toBeVisible();
+      // The first screen: the assistant is closed.
+      await page.screenshot({ path: join(directory, `red-closed-${viewport.name}.png`), fullPage: true });
+      await page.screenshot({ path: join(directory, `red-closed-viewport-${viewport.name}.png`) });
+
+      const assistant = await openAssistant(page);
+      await page.screenshot({ path: join(directory, `assistant-opened-viewport-${viewport.name}.png`) });
       await page.getByRole("button", { name: "We are closing for holidays from 1 to 21 June" }).click();
       await expect(page.getByRole("group", { name: "Plan awaiting your confirmation" })).toBeVisible();
       await page.screenshot({ path: join(directory, `red-${viewport.name}.png`), fullPage: true });
       await page.screenshot({ path: join(directory, `red-viewport-${viewport.name}.png`) });
+
+      // Closed with a proposal waiting: the toggle carries the attention dot.
+      await assistant.getByRole("button", { name: "Close assistant" }).click();
+      await expect(assistantToggle(page)).toHaveAccessibleName(/needs your confirmation/);
+      await expect(assistantToggle(page)).toHaveCSS("background-color", "rgb(255, 204, 51)"); // transition over
+      await page.screenshot({ path: join(directory, `red-closed-attention-viewport-${viewport.name}.png`) });
+      await openAssistant(page);
 
       if (viewport.name === DESKTOP) {
         for (const tab of WORKSPACE_TABS) {
@@ -64,6 +78,10 @@ test.describe("screenshots", () => {
       await expect(page.getByText("No action needed")).toBeVisible();
       await expect(page.getByRole("list", { name: "Chart legend" })).toBeVisible();
       await page.screenshot({ path: join(directory, `green-${viewport.name}.png`), fullPage: true });
+      // The open assistant was remembered across the reload; the calm first screen is the closed one.
+      await assistantPanel(page).getByRole("button", { name: "Close assistant" }).click();
+      await expect(assistantToggle(page)).toHaveCSS("background-color", "rgb(255, 204, 51)"); // transition over
+      await page.screenshot({ path: join(directory, `green-closed-${viewport.name}.png`), fullPage: true });
     });
 
     test(`chat removal card at ${viewport.name}`, async ({ page }) => {
@@ -73,7 +91,7 @@ test.describe("screenshots", () => {
 
       await mockApi(page, { chatQueue: [chatRemovalProposal, chatRemoved] });
       await page.goto("/");
-      const chat = page.getByRole("complementary", { name: "Assistant" });
+      const chat = await openAssistant(page);
       await page.getByLabel("Message to the assistant").fill("Please remove the oven purchase");
       await page.getByLabel("Message to the assistant").press("Enter");
       const removal = chat.getByRole("group", { name: "Plan awaiting removal" });

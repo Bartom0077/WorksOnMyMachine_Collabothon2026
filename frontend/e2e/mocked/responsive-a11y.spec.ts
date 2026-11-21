@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 import { approvedDecision, chatProposal, chatRemovalProposal, chatRemoved, greenDashboard } from "../fixtures/data";
+import { assistantPanel, assistantToggle, openAssistant } from "../fixtures/assistant";
 import { mockApi } from "../fixtures/mockApi";
 
 const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
@@ -35,6 +36,7 @@ async function loadRedState(page: Page) {
 test.describe("accessibility", () => {
   test("RED state with chat confirmation has no WCAG A/AA violations", async ({ page }) => {
     await loadRedState(page);
+    await openAssistant(page);
     await page.getByRole("button", { name: "We are closing for holidays from 1 to 21 June" }).click();
     await expect(page.getByRole("group", { name: "Plan awaiting your confirmation" })).toBeVisible();
     await page.getByText("Why?", { exact: true }).click();
@@ -60,6 +62,7 @@ test.describe("accessibility", () => {
   test("chat removal card and its outcome have no WCAG A/AA violations", async ({ page }) => {
     await mockApi(page, { chatQueue: [chatRemovalProposal, chatRemoved] });
     await page.goto("/");
+    await openAssistant(page);
     await page.getByLabel("Message to the assistant").fill("Please remove the oven purchase");
     await page.getByLabel("Message to the assistant").press("Enter");
     const removal = page.getByRole("group", { name: "Plan awaiting removal" });
@@ -93,7 +96,12 @@ test.describe("accessibility", () => {
     await loadRedState(page);
     await expect(page.getByRole("banner")).toBeVisible();
     await expect(page.getByRole("main")).toBeVisible();
-    await expect(page.getByRole("complementary", { name: "Assistant" })).toBeVisible();
+    // The assistant starts closed; its toggle in the banner names the panel it controls.
+    await expect(assistantPanel(page)).toBeHidden();
+    const toggle = page.getByRole("banner").getByRole("button", { name: "Assistant", exact: true });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(toggle).toHaveAttribute("aria-controls", "assistant");
+    await expect(page.locator("#assistant")).toHaveAttribute("aria-labelledby", "chat-title");
 
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
@@ -147,13 +155,19 @@ test.describe("mobile (375 px)", () => {
 
     await expect(page.getByText("Status: Shortfall ahead")).toBeVisible();
     await expect(page.getByRole("article")).toHaveCount(4);
-    await expect(page.getByRole("link", { name: "Tell the assistant about your plans" })).toBeVisible();
-    await expect(page.getByLabel("Message to the assistant")).toBeVisible();
+    await expect(assistantToggle(page)).toBeVisible();
+    await expect(assistantPanel(page)).toBeHidden();
 
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    );
-    expect(overflow).toBeLessThanOrEqual(0);
+    const overflow = () =>
+      page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(await overflow()).toBeLessThanOrEqual(0);
+    await expectNoAxeViolations(page);
+
+    // Opened, the assistant is stacked under the content: it is scrolled to and the message box takes the focus.
+    const assistant = await openAssistant(page);
+    await expect(assistant).toBeInViewport({ ratio: 1 });
+    await expect(page.getByLabel("Message to the assistant")).toBeFocused();
+    expect(await overflow()).toBeLessThanOrEqual(0);
     await expectNoAxeViolations(page);
   });
 

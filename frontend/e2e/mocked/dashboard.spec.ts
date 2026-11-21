@@ -7,6 +7,7 @@ import {
   greenDashboard,
   redDashboard,
 } from "../fixtures/data";
+import { openAssistant } from "../fixtures/assistant";
 import { apiError, mockApi } from "../fixtures/mockApi";
 
 function workspaceTab(page: Page, name: RegExp) {
@@ -23,7 +24,7 @@ test.describe("dashboard", () => {
     await mockApi(page);
     await page.goto("/");
 
-    await expect(page.getByRole("heading", { level: 1, name: "Autonomous CFO" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "FinGuard" })).toBeVisible();
     const hero = page.getByRole("region", { name: /€22,000 short/ });
     await expect(hero.getByText("Shortfall ahead")).toBeVisible();
     await expect(hero.getByText("€3,205.69")).toBeVisible();
@@ -97,10 +98,17 @@ test.describe("dashboard", () => {
     await expect(page.getByText("AI explanation", { exact: true })).toBeVisible();
     await expect(page.getByRole("article", { name: /Option E/ }).getByText("Why option E:")).toBeVisible();
 
-    await expect(page.getByText("Shortfall ahead").first()).toBeInViewport({ ratio: 1 });
-    await expect(page.locator(".chart__plot")).toBeInViewport({ ratio: 1 });
-    await expect(page.getByRole("button", { name: "Approve option E" })).toBeInViewport({ ratio: 1 });
-    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    const expectFirstScreen = async () => {
+      await expect(page.getByText("Shortfall ahead").first()).toBeInViewport({ ratio: 1 });
+      await expect(page.locator(".chart__plot")).toBeInViewport({ ratio: 1 });
+      await expect(page.getByRole("button", { name: "Approve option E" })).toBeInViewport({ ratio: 1 });
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    };
+    // With the assistant closed (the default) and with it docked beside the forecast.
+    await expectFirstScreen();
+    const assistant = await openAssistant(page);
+    await expect(assistant).toBeInViewport({ ratio: 1 });
+    await expectFirstScreen();
   });
 
   test("the first screen at 1440x900 shows the tabs once an approval turned the outlook green", async ({ page }) => {
@@ -236,7 +244,11 @@ test.describe("dashboard", () => {
 
     await page.getByLabel("Today").fill("2025-12-01");
     await expect.poll(() => api.requests.dashboard.at(-1)?.get("as_of_date")).toBe("2025-12-01");
-    await expect(page.getByText("“Today” is now 1 Dec 2025. Started a new conversation.")).toBeVisible();
+    // The note waits in the closed assistant.
+    const note = page.getByText("“Today” is now 1 Dec 2025. Started a new conversation.");
+    await expect(note).toBeHidden();
+    await openAssistant(page);
+    await expect(note).toBeVisible();
   });
 
   test("rejects an invalid buffer without calling the API", async ({ page }) => {
@@ -272,6 +284,7 @@ test.describe("dashboard", () => {
       await expect(page.getByRole("article")).toHaveCount(4);
       const callsBefore = api.requests.dashboard.length;
 
+      await openAssistant(page);
       const today = page.getByLabel("Today");
       await today.focus();
       // Day, month, year: the segment order of the en-GB locale this describe block runs in.

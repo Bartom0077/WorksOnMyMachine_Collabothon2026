@@ -14,13 +14,15 @@ import { StatusHero } from "./components/StatusHero";
 import { TopBar } from "./components/TopBar";
 import { type WorkspaceTab, WorkspaceTabs } from "./components/WorkspaceTabs";
 import { useAdviceFlow } from "./hooks/useAdviceFlow";
+import { useAssistantPanel } from "./hooks/useAssistantPanel";
 import { useAsyncResource } from "./hooks/useAsyncResource";
 import { useChartPreview } from "./hooks/useChartPreview";
-import { useChat } from "./hooks/useChat";
+import { chatAttention, useChat } from "./hooks/useChat";
 import { type DecisionOutcome, useDecisionFlow } from "./hooks/useDecisionFlow";
 import { usePlanRemoval } from "./hooks/usePlanRemoval";
 import { buildAdviceCards } from "./lib/advice";
 import { formatDate } from "./lib/format";
+import { isSingleColumn } from "./lib/layout";
 import type { Dashboard, Recommendation, ScenarioParams } from "./types/api";
 
 // The charting library is the bulk of the bundle: it is a separate chunk, fetched in parallel with the
@@ -28,8 +30,7 @@ import type { Dashboard, Recommendation, ScenarioParams } from "./types/api";
 const balanceChartModule = import("./components/BalanceChart");
 const BalanceChart = lazy(() => balanceChartModule);
 
-/** The width below which the chat sits under the forecast instead of beside it; mirrors the breakpoint in styles.css. */
-const SINGLE_COLUMN_QUERY = "(max-width: 1100px)";
+const RESET_OUTCOME = { title: "Demo reset: all plans and decisions were deleted.", messages: [] };
 
 const DEFAULT_PARAMS: ScenarioParams = { as_of_date: "2025-05-10", horizon_days: 60, buffer_eur: 3000 };
 
@@ -77,6 +78,8 @@ export default function App() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetError, setResetError] = useState<ApiError | null>(null);
+  // Announced in the main column: the note in the chat is out of sight while the assistant is closed.
+  const [resetDone, setResetDone] = useState(false);
   const [chosenTab, setChosenTab] = useState<WorkspaceTabId | null>(null);
 
   const loadDashboard = useCallback((signal: AbortSignal) => api.getDashboard(params, signal), [params]);
@@ -126,14 +129,15 @@ export default function App() {
     reloadDecisions();
   }, [reloadDashboard, reloadAdvice, reloadEvents, reloadDecisions]);
 
-  // In the single-column layout the chat sits below everything else: bring the changed forecast into view.
+  // In the single-column layout the assistant sits below everything else: bring the changed forecast into view.
   const mainRef = useRef<HTMLElement>(null);
   const showUpdatedForecast = useCallback(() => {
     refreshAll();
-    if (window.matchMedia(SINGLE_COLUMN_QUERY).matches) mainRef.current?.scrollIntoView();
+    if (isSingleColumn()) mainRef.current?.scrollIntoView();
   }, [refreshAll]);
 
   const chat = useChat(params, showUpdatedForecast);
+  const assistant = useAssistantPanel();
   // Decisions are taken on the dashboard on screen, and only while it reflects the latest request.
   const boardIsCurrent = !dashboard.loading && dashboard.error === null;
   const decisions = useDecisionFlow(board, boardIsCurrent, recommendation.data?.explanation ?? null, refreshAll);
@@ -159,6 +163,7 @@ export default function App() {
     (patch: Partial<ScenarioParams>) => {
       setParams((current) => ({ ...current, ...patch }));
       forgetScenarioChoices();
+      setResetDone(false);
       if (patch.as_of_date !== undefined && patch.as_of_date !== params.as_of_date) {
         startNewConversation(`“Today” is now ${formatDate(patch.as_of_date)}. Started a new conversation.`);
       }
@@ -173,7 +178,8 @@ export default function App() {
       await api.resetDemo();
       setResetOpen(false);
       forgetScenarioChoices();
-      startNewConversation("Demo reset: all plans and decisions were deleted.");
+      startNewConversation(RESET_OUTCOME.title);
+      setResetDone(true);
       refreshAll();
     } catch (error) {
       setResetError(toApiError(error));
@@ -242,16 +248,19 @@ export default function App() {
         dataRange={board?.data_range ?? null}
         onChange={changeParams}
         onResetDemo={() => setResetOpen(true)}
+        assistant={assistant}
+        assistantAttention={assistant.open ? null : chatAttention(chat)}
       />
 
-      <div className="layout">
+      <div className={assistant.open ? "layout" : "layout layout--assistant-closed"}>
         <main id="main" ref={mainRef} className="layout__main" aria-busy={dashboard.loading}>
-          <a className="assistant-link" href="#assistant">
-            <Icon name="chat" />
-            Tell the assistant about your plans
-          </a>
-          <OutcomeBanner outcome={optionOutcome(decisions.outcome)} onDismiss={decisions.dismissOutcome} />
-          <OutcomeBanner outcome={adviceFlow.outcome} onDismiss={adviceFlow.dismissOutcome} />
+          <OutcomeBanner
+            outcome={resetDone ? RESET_OUTCOME : null}
+            simulated={false}
+            onDismiss={() => setResetDone(false)}
+          />
+          <OutcomeBanner outcome={optionOutcome(decisions.outcome)} simulated onDismiss={decisions.dismissOutcome} />
+          <OutcomeBanner outcome={adviceFlow.outcome} simulated onDismiss={adviceFlow.dismissOutcome} />
 
           {dashboard.error ? (
             <ErrorNotice
@@ -295,7 +304,7 @@ export default function App() {
           </footer>
         </main>
 
-        <ChatPanel chat={chat} />
+        <ChatPanel chat={chat} panel={assistant} />
       </div>
 
       <ApprovalDialog decisions={decisions} />

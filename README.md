@@ -306,13 +306,14 @@ bash deploy/deploy-dev.sh images     # rebuild and roll out the three images onl
 All figures below are computed by the code from the 2025 bank statement, with the defaults: horizon
 60 days, safety buffer €3,000. Start with **Reset demo**. The first screen shows the status, the chart and
 the recommended option; "Options", "CFO advice", "My plans" and "History" are tabs of one card below the
-chart.
+chart. The assistant starts closed: the yellow **Assistant** button in the top bar opens it as a panel
+beside the forecast (the choice is remembered in the browser).
 
 1. **"Vincenzo runs a pizzeria and has no time for finance."** Today is 10 May 2025 and the balance is
    **€3,205.69**. Even without any plans the agent finds a marginal problem: the lowest projected balance is
    **−€325.55** on 1 July, so the status is "Shortfall ahead". The chart shows why (fixed payments at the
    start of the month); "Why?" in the status card lists those fixed costs.
-2. **The owner tells the assistant a plan.** In the chat: *"We are closing for holidays from 1 to 21 June."*
+2. **The owner tells the assistant a plan.** Open the **Assistant** and type: *"We are closing for holidays from 1 to 21 June."*
    The assistant repeats what it understood and asks for confirmation; after "yes" the count on the
    "My plans" tab goes up (open the tab to see the plan) and the forecast is recalculated: the lowest
    balance drops to **−€15,728.42 on 1 July**. Three weeks without revenue, while salaries, rent and the

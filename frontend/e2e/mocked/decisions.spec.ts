@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 import { approvedDashboard, approvedDecision, llmRecommendation, redDashboard, rejectedDecision } from "../fixtures/data";
+import { assistantPanel, openAssistant } from "../fixtures/assistant";
 import { apiError, mockApi } from "../fixtures/mockApi";
 
 const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
@@ -423,7 +424,14 @@ test.describe("decisions", () => {
     await dialog.getByRole("button", { name: "Delete plans and decisions" }).click();
     await expect(dialog).toBeHidden();
     expect(api.requests.resets).toBe(1);
-    await expect(page.getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
+    // Confirmed in the main column, with the assistant still closed; the same note opens the new conversation.
+    const confirmation = page.getByRole("main").getByRole("status").filter({ hasText: "Demo reset" });
+    await expect(confirmation).toHaveText("Demo reset: all plans and decisions were deleted.");
+    await expect(assistantPanel(page)).toBeHidden();
+    await confirmation.getByRole("button", { name: "Dismiss message" }).click();
+    await expect(confirmation).toHaveCount(0);
+    const panel = await openAssistant(page);
+    await expect(panel.getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
     await expect(page.getByText("No decisions yet. Approvals and rejections are recorded here.")).toBeVisible();
     await expect(workspaceTab(page, "History")).toHaveText(/^History\s*0$/);
     await expect(workspaceTab(page, "My plans")).toHaveText(/^My plans\s*0$/);

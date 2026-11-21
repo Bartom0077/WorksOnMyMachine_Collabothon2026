@@ -12,6 +12,7 @@ import { type Locator, type Page, expect, test } from "@playwright/test";
  * from the 2025 bank data; the LLM's wording is never asserted.
  * Options, CFO advice, plans and history share one tab list and only the selected panel is rendered, so every
  * step selects the tab it reads from.
+ * The assistant panel starts closed and remembers the owner's last choice, so it is opened after every page load.
  * Set SCREENSHOT_DIR to capture a full-page screenshot at every step (the key states also at 375 px).
  */
 
@@ -106,6 +107,19 @@ test.describe("demo story on the deployed application", () => {
       .filter({ has: page.getByText("Interest earned", { exact: true }) });
   }
 
+  /** The assistant starts closed (later loads restore the last choice): puts its panel on screen for the chat steps. */
+  async function openAssistant(): Promise<void> {
+    const toggle = page.getByRole("button", { name: /^Assistant/ });
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+    await expect(page.getByRole("complementary", { name: "Assistant" })).toBeVisible();
+  }
+
+  /** Loads the application with the assistant panel open. */
+  async function loadApp(): Promise<void> {
+    await page.goto("/");
+    await openAssistant();
+  }
+
   function explanationBadge(): Locator {
     return page.getByText(/^(AI explanation|Standard explanation \(AI unavailable\))$/);
   }
@@ -134,10 +148,13 @@ test.describe("demo story on the deployed application", () => {
   });
 
   test("starts from a clean demo on 10 May 2025", async () => {
-    await page.goto("/");
+    await loadApp();
     await page.getByRole("button", { name: "Reset demo" }).click();
     await page.getByRole("dialog", { name: "Reset the demo?" }).getByRole("button", { name: "Delete plans and decisions" }).click();
-    await expect(page.getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
+    // The confirmation in the main column (the same note also opens the new conversation in the assistant).
+    const confirmation = page.getByRole("main").getByRole("status").filter({ hasText: "Demo reset" });
+    await expect(confirmation).toContainText("Demo reset: all plans and decisions were deleted.");
+    await confirmation.getByRole("button", { name: "Dismiss message" }).click();
 
     await expect(page.getByLabel("Today")).toHaveValue("2025-05-10");
     await openTab("My plans");
@@ -380,7 +397,7 @@ test.describe("demo story on the deployed application", () => {
 
   test("a plan added in the chat is in the forecast again", async () => {
     expect((await page.request.post("/api/demo/reset")).status()).toBe(204);
-    await page.goto("/"); // a fresh conversation on 10 May 2025
+    await loadApp(); // a fresh conversation on 10 May 2025
     await openTab("My plans");
     await expect(plans().getByText(/No plans yet/)).toBeVisible();
     await expect(heroFigure(FIGURES.lowestWithoutPlans)).toBeVisible();
@@ -438,7 +455,7 @@ test.describe("demo story on the deployed application", () => {
 
   test("with spare cash the CFO recommends a tax reserve and an investment deposit", async () => {
     expect((await page.request.post("/api/demo/reset")).status()).toBe(204);
-    await page.goto("/");
+    await loadApp();
     await page.getByLabel("Today").fill("2025-12-31");
     await expect(heroFigure(FIGURES.decemberBalance)).toBeVisible();
     await expect(page.getByText("Status: On track")).toBeVisible();
@@ -522,7 +539,7 @@ test.describe("demo story on the deployed application", () => {
     await page.getByRole("button", { name: "Reset demo" }).click();
     await page.getByRole("dialog", { name: "Reset the demo?" }).getByRole("button", { name: "Delete plans and decisions" }).click();
 
-    await expect(page.getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
+    await expect(page.getByRole("main").getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
     await openTab("My plans");
     await expect(plans().getByText(/No plans yet/)).toBeVisible();
     await openTab("History");

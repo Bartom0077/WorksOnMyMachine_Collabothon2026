@@ -11,6 +11,7 @@ import {
   greenDashboard,
   redDashboard,
 } from "../fixtures/data";
+import { assistantPanel, openAssistant } from "../fixtures/assistant";
 import { apiError, mockApi } from "../fixtures/mockApi";
 
 type TabName = "Options" | "CFO advice" | "My plans" | "History";
@@ -46,12 +47,13 @@ test.describe("assistant chat", () => {
       },
     });
     await page.goto("/");
+    await openAssistant(page);
     await expect(page.getByText("No action needed")).toBeVisible();
     await expect(workspaceTab(page, "Options")).toHaveCount(0);
     await expect(workspaceTab(page, "CFO advice")).toHaveAttribute("aria-selected", "true");
     await expect(workspaceTab(page, "My plans")).toHaveText(/^My plans\s*0$/);
 
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
     await expect(chat.getByText("I ask before saving anything.")).toBeVisible();
     await expect(chat.getByText("Tell me a plan and I will show how it changes your forecast.")).toBeVisible();
     await chat.getByRole("button", { name: "We are closing for holidays from 1 to 21 June" }).click();
@@ -96,6 +98,7 @@ test.describe("assistant chat", () => {
     const answer = { ...chatSaved, events_changed: false, saved_events: [] };
     const api = await mockApi(page, { chatQueue: [answer, answer], chatDelayMs: 1500 });
     await page.goto("/");
+    await openAssistant(page);
 
     const input = page.getByLabel("Message to the assistant");
     await input.fill("first message");
@@ -130,6 +133,7 @@ test.describe("assistant chat", () => {
       },
     });
     await page.goto("/");
+    await openAssistant(page);
     await expect(page.getByText("No action needed")).toBeVisible();
 
     await page.getByLabel("Message to the assistant").fill("Yes, please include it");
@@ -149,6 +153,7 @@ test.describe("assistant chat", () => {
   test("“Correct it” moves focus to the message box with a hint", async ({ page }) => {
     await mockApi(page, { chatQueue: [chatProposal] });
     await page.goto("/");
+    await openAssistant(page);
 
     const input = page.getByLabel("Message to the assistant");
     await input.fill("We are closing for holidays in June");
@@ -162,8 +167,9 @@ test.describe("assistant chat", () => {
   test("shows an unavailable assistant inline and retries the same message", async ({ page }) => {
     const api = await mockApi(page);
     await page.goto("/");
+    await openAssistant(page);
 
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
     await chat.getByRole("button", { name: "Why is my balance dropping?" }).click();
 
     const alert = chat.getByRole("alert");
@@ -191,11 +197,12 @@ test.describe("assistant chat", () => {
       },
     });
     await page.goto("/");
+    await openAssistant(page);
     const plans = await openPlans(page);
     await expect(plans.getByRole("listitem")).toHaveCount(2);
     await expect(page.getByText("Status: Shortfall ahead")).toBeVisible();
 
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
     const input = page.getByLabel("Message to the assistant");
     await input.fill("Please remove the oven purchase");
     await input.press("Enter");
@@ -242,10 +249,11 @@ test.describe("assistant chat", () => {
   test("“Keep it” removes nothing", async ({ page }) => {
     const api = await mockApi(page, { chatQueue: [chatRemovalProposal, chatRemovalKept] });
     await page.goto("/");
+    await openAssistant(page);
     const plans = await openPlans(page);
     await expect(plans.getByRole("listitem")).toHaveCount(2);
 
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
     const input = page.getByLabel("Message to the assistant");
     await input.fill("Please remove the oven purchase");
     await input.press("Enter");
@@ -273,8 +281,9 @@ test.describe("assistant chat", () => {
     };
     const api = await mockApi(page, { chatQueue: [chatRemovalProposal, stale] });
     await page.goto("/");
+    await openAssistant(page);
     const plans = await openPlans(page);
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
     const input = page.getByLabel("Message to the assistant");
     await input.fill("Please remove the oven purchase");
     await input.press("Enter");
