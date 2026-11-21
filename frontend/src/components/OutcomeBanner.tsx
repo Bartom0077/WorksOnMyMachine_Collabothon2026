@@ -1,8 +1,8 @@
-import type { DecisionOutcome } from "../hooks/useDecisionFlow";
 import { Icon } from "./Icon";
 
 interface Props {
-  outcome: DecisionOutcome | null;
+  /** What was approved and the execution messages it produced; null when there is nothing to announce. */
+  outcome: { title: string; messages: string[] } | null;
   onDismiss: () => void;
 }
 
@@ -15,7 +15,7 @@ export function OutcomeBanner({ outcome, onDismiss }: Props) {
           <Icon name="check" size={18} />
           <div className="notice__body">
             <p className="notice__title">
-              Option {outcome.optionId} approved: {outcome.optionTitle}{" "}
+              {outcome.title}{" "}
               <span className="badge badge--simulated">SIMULATED</span>
             </p>
             <ul className="notice__list">

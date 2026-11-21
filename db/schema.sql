@@ -89,13 +89,14 @@ CREATE TABLE IF NOT EXISTS account_balance_anchors (
 -- Forecasts, averages and transaction categories are never stored; they are recomputed on demand.
 -- ---------------------------------------------------------------------------
 
--- Audit trail of the owner's decisions on rescue options. Execution is always simulated.
+-- Audit trail of the owner's decisions on rescue options and on the CFO advisors' proposals. Execution is
+-- always simulated.
 CREATE TABLE IF NOT EXISTS owner_decisions (
     id SERIAL PRIMARY KEY,
     as_of_date DATE NOT NULL,                     -- simulated "today" when the decision was taken
     horizon_days SMALLINT NOT NULL,
     buffer_eur NUMERIC(12, 2) NOT NULL,
-    option_id VARCHAR(5) NOT NULL,                -- A..E
+    option_id VARCHAR(5) NOT NULL,                -- rescue option A..E or advisor proposal T1, T2, F1, F2, I1
     option_title VARCHAR(255) NOT NULL,
     option_description TEXT NOT NULL,
     status VARCHAR(20) NOT NULL CHECK (status IN ('approved', 'rejected')),
@@ -108,20 +109,27 @@ CREATE TABLE IF NOT EXISTS owner_decisions (
 );
 ALTER TABLE owner_decisions ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ;
 
--- Future plans: described by the owner in chat (source 'chat') or created from an approved option ('agent').
+-- Future plans: described by the owner in chat (source 'chat') or created from an approved rescue option or
+-- advisor proposal ('agent').
 -- Chat events are written by the MCP server, so the database itself limits them to what the owner may plan
 -- in the chat (ROZWIAZANIE.md §8.2/§8.3): closure, expense or inflow, never tied to a category or a decision.
 -- db/setup_mcp_user.sh adds row level security so that the MCP role can insert only source = 'chat'.
 CREATE TABLE IF NOT EXISTS planned_events (
     id SERIAL PRIMARY KEY,
     event_type VARCHAR(30) NOT NULL
-        CHECK (event_type IN ('closure', 'expense', 'inflow', 'payment_deferral', 'credit_line')),
+        CONSTRAINT planned_events_event_type CHECK (event_type IN (
+            'closure', 'expense', 'inflow', 'payment_deferral', 'credit_line', 'term_deposit', 'fx_prebuy')),
     -- closure: first and last closed day. expense / inflow: date_to = date_from. credit_line: valid from..to.
     -- payment_deferral: ONE row per postponed payment; date_from = original due date, date_to = new due date.
+    -- term_deposit: date_from = opening day, date_to = maturity.
+    -- fx_prebuy: date_from = purchase day, date_to = date of the last instalment the purchase covers.
     date_from DATE NOT NULL,
     date_to DATE NOT NULL CHECK (date_to >= date_from),
-    amount_eur NUMERIC(12, 2) CHECK (amount_eur > 0),      -- NULL for closure; payment_deferral: the payment
-    category VARCHAR(50),                                  -- payment_deferral only (e.g. investment_outflow)
+    -- NULL for closure. payment_deferral: the payment. term_deposit: the principal. fx_prebuy: the EUR paid.
+    amount_eur NUMERIC(12, 2) CHECK (amount_eur > 0),
+    -- payment_deferral: category of the postponed payment (e.g. investment_outflow).
+    -- term_deposit: 'investment' or 'tax_reserve'. NULL for every other type.
+    category VARCHAR(50),
     description TEXT NOT NULL,
     original_utterance TEXT,                               -- owner's chat message (audit trail)
     source VARCHAR(10) NOT NULL CHECK (source IN ('chat', 'agent')),
@@ -142,6 +150,31 @@ BEGIN
             source <> 'chat'
             OR (event_type IN ('closure', 'expense', 'inflow') AND category IS NULL AND decision_id IS NULL))
             NOT VALID;
+    END IF;
+END
+$$;
+
+-- Databases created before term_deposit and fx_prebuy existed: their check on event_type is an unnamed inline
+-- check (PostgreSQL generated its name), so it is found by what it constrains (the event_type column alone) and
+-- replaced by the named constraint of the CREATE TABLE above. The new list contains the old one, so every
+-- existing row passes. A second run finds nothing to drop and nothing to add.
+DO $$
+DECLARE
+    outdated_check name;
+BEGIN
+    FOR outdated_check IN
+        SELECT con.conname FROM pg_constraint con
+        WHERE con.conrelid = 'planned_events'::regclass AND con.contype = 'c'
+          AND con.conname <> 'planned_events_event_type'
+          AND con.conkey = ARRAY(SELECT att.attnum FROM pg_attribute att
+                                 WHERE att.attrelid = con.conrelid AND att.attname = 'event_type')
+    LOOP
+        EXECUTE format('ALTER TABLE planned_events DROP CONSTRAINT %I', outdated_check);
+    END LOOP;
+    IF NOT EXISTS (SELECT FROM pg_constraint
+                   WHERE conname = 'planned_events_event_type' AND conrelid = 'planned_events'::regclass) THEN
+        ALTER TABLE planned_events ADD CONSTRAINT planned_events_event_type CHECK (event_type IN (
+            'closure', 'expense', 'inflow', 'payment_deferral', 'credit_line', 'term_deposit', 'fx_prebuy'));
     END IF;
 END
 $$;

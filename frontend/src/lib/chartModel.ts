@@ -8,7 +8,30 @@ export interface ChartRow {
   date: string;
   history?: number;
   baseline?: number;
-  option?: number;
+  preview?: number;
+}
+
+/** A what-if scenario drawn next to the baseline forecast: a rescue option or CFO recommendations. */
+export interface ChartPreview {
+  /** What the scenario is called after "with", e.g. "option E". */
+  name: string;
+  title: string;
+  forecast: BalancePoint[];
+  minBalanceEur: number;
+  minBalanceDate: string;
+  /** The credit line the scenario relies on, if any. */
+  creditLimitEur: number | null;
+}
+
+export function optionPreview(option: RescueOption): ChartPreview {
+  return {
+    name: `option ${option.id}`,
+    title: option.title,
+    forecast: option.forecast,
+    minBalanceEur: option.new_min_balance_eur,
+    minBalanceDate: option.new_min_balance_date,
+    creditLimitEur: option.credit_limit_eur,
+  };
 }
 
 interface ClosureBand {
@@ -39,7 +62,7 @@ function upsert(rows: Map<string, ChartRow>, date: string, patch: Partial<ChartR
   rows.set(date, { ...existing, ...patch });
 }
 
-function addSeries(rows: Map<string, ChartRow>, key: "history" | "baseline" | "option", points: BalancePoint[]): void {
+function addSeries(rows: Map<string, ChartRow>, key: "history" | "baseline" | "preview", points: BalancePoint[]): void {
   for (const point of points) upsert(rows, point.date, { [key]: point.balance_eur });
 }
 
@@ -104,16 +127,16 @@ function eventMarkers(events: PlannedEvent[], rows: Map<string, ChartRow>): Even
   return markers;
 }
 
-/** Merges history, the no-action forecast and the previewed option into one time-indexed row set. */
-export function buildChartModel(dashboard: Dashboard, previewOption: RescueOption | null): ChartModel {
+/** Merges history, the no-action forecast and the previewed scenario into one time-indexed row set. */
+export function buildChartModel(dashboard: Dashboard, preview: ChartPreview | null): ChartModel {
   const rows = new Map<string, ChartRow>();
   addSeries(rows, "history", dashboard.history);
   // Anchor both forecast lines on today's balance so they visibly continue the history line.
   upsert(rows, dashboard.as_of_date, { baseline: dashboard.current_balance_eur });
   addSeries(rows, "baseline", dashboard.forecast.days);
-  if (previewOption !== null) {
-    upsert(rows, dashboard.as_of_date, { option: dashboard.current_balance_eur });
-    addSeries(rows, "option", previewOption.forecast);
+  if (preview !== null) {
+    upsert(rows, dashboard.as_of_date, { preview: dashboard.current_balance_eur });
+    addSeries(rows, "preview", preview.forecast);
   }
 
   const sorted = [...rows.values()].sort((a, b) => a.time - b.time);
@@ -124,10 +147,10 @@ export function buildChartModel(dashboard: Dashboard, previewOption: RescueOptio
   const levels = [
     dashboard.risk.floor_eur + dashboard.buffer_eur,
     -(dashboard.risk.credit_limit_eur ?? 0),
-    -(previewOption?.credit_limit_eur ?? 0),
+    -(preview?.creditLimitEur ?? 0),
   ];
   const balances = sorted.flatMap((row) =>
-    [row.history, row.baseline, row.option].filter((value) => value !== undefined),
+    [row.history, row.baseline, row.preview].filter((value) => value !== undefined),
   );
 
   return {

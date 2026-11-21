@@ -1,5 +1,8 @@
 import type { Page, Route } from "@playwright/test";
 import type {
+  AdviceDecisionRequest,
+  AdviceRecommendation,
+  AdviceResponse,
   ApiErrorBody,
   ChatRequest,
   ChatResponse,
@@ -8,8 +11,9 @@ import type {
   DecisionRequest,
   PlannedEvent,
   Recommendation,
+  ScenarioParams,
 } from "../../src/types/api";
-import { greenRecommendation, llmRecommendation, redDashboard } from "./data";
+import { greenRecommendation, llmRecommendation, redAdvice, redAdviceRecommendation, redDashboard } from "./data";
 
 export interface MockError {
   status: number;
@@ -22,6 +26,11 @@ export interface MockState {
   dashboardDelayMs: number;
   recommendation: Recommendation | MockError;
   recommendationDelayMs: number;
+  /** GET /advice. The default mirrors the default RED dashboard: liquidity first, only the tax advice T2. */
+  advice: AdviceResponse | MockError;
+  adviceDelayMs: number;
+  adviceRecommendation: AdviceRecommendation | MockError;
+  adviceRecommendationDelayMs: number;
   events: PlannedEvent[];
   decisions: Decision[];
   /** Responses for successive POST /chat calls; an empty queue answers 503 assistant_unavailable. */
@@ -29,6 +38,8 @@ export interface MockState {
   chatDelayMs: number;
   /** Called for POST /decisions; returns the stored decision or an error and may mutate the state. */
   onDecision: (request: DecisionRequest, state: MockState) => Decision | MockError;
+  /** Called for POST /advice/decisions; returns the stored decisions or an error and may mutate the state. */
+  onAdviceDecision: (request: AdviceDecisionRequest, state: MockState) => Decision[] | MockError;
   /** Called after a successful chat response is chosen; lets a test change what later requests return. */
   afterChat: (response: ChatResponse, state: MockState) => void;
 }
@@ -38,6 +49,9 @@ export interface MockApi {
   requests: {
     dashboard: URLSearchParams[];
     recommendation: number;
+    advice: URLSearchParams[];
+    adviceRecommendation: ScenarioParams[];
+    adviceDecisions: AdviceDecisionRequest[];
     chat: ChatRequest[];
     decisions: DecisionRequest[];
     deletedEventIds: number[];
@@ -79,17 +93,25 @@ export async function mockApi(page: Page, overrides: Partial<MockState> = {}): P
     dashboardDelayMs: 0,
     recommendation: llmRecommendation,
     recommendationDelayMs: 0,
+    advice: redAdvice,
+    adviceDelayMs: 0,
+    adviceRecommendation: redAdviceRecommendation,
+    adviceRecommendationDelayMs: 0,
     events: isMockError(overrides.dashboard ?? redDashboard) ? [] : [...redDashboard.events],
     decisions: [],
     chatQueue: [],
     chatDelayMs: 0,
     onDecision: () => apiError(409, "option_not_available", "This option is no longer available."),
+    onAdviceDecision: () => apiError(409, "proposal_not_available", "This recommendation is no longer available."),
     afterChat: () => undefined,
     ...overrides,
   };
   const requests: MockApi["requests"] = {
     dashboard: [],
     recommendation: 0,
+    advice: [],
+    adviceRecommendation: [],
+    adviceDecisions: [],
     chat: [],
     decisions: [],
     deletedEventIds: [],
@@ -122,6 +144,23 @@ export async function mockApi(page: Page, overrides: Partial<MockState> = {}): P
         if (isMockError(result)) return fulfill(route, result);
         state.decisions = [result, ...state.decisions];
         return fulfill(route, { decision: result, execution_messages: result.execution_messages }, 201);
+      }
+      case "GET /advice":
+        requests.advice.push(url.searchParams);
+        await delay(state.adviceDelayMs);
+        return fulfill(route, state.advice);
+      case "POST /advice/recommendation":
+        requests.adviceRecommendation.push(request.postDataJSON());
+        await delay(state.adviceRecommendationDelayMs);
+        return fulfill(route, state.adviceRecommendation);
+      case "POST /advice/decisions": {
+        const body: AdviceDecisionRequest = request.postDataJSON();
+        requests.adviceDecisions.push(body);
+        const result = state.onAdviceDecision(body, state);
+        if (isMockError(result)) return fulfill(route, result);
+        state.decisions = [...result, ...state.decisions];
+        const messages = result.flatMap((decision) => decision.execution_messages);
+        return fulfill(route, { decisions: result, execution_messages: messages }, 201);
       }
       case "POST /chat": {
         const body: ChatRequest = request.postDataJSON();

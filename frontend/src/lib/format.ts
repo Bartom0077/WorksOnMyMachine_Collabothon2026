@@ -102,6 +102,8 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   inflow: "Planned inflow",
   payment_deferral: "Deferred payment",
   credit_line: "Credit line",
+  term_deposit: "Term deposit",
+  fx_prebuy: "CHF purchase",
 };
 
 /** "get_cash_kpis" → "cash kpis"; makes MCP tool names readable in the "data used" line. */

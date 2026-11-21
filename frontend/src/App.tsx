@@ -1,5 +1,6 @@
-import { Suspense, lazy, useCallback, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useRef, useState } from "react";
 import { type ApiError, api, toApiError } from "./api/client";
+import { AdviceSection } from "./components/AdviceSection";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { ChatPanel } from "./components/ChatPanel";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -12,9 +13,12 @@ import { OutcomeBanner } from "./components/OutcomeBanner";
 import { PlansList } from "./components/PlansList";
 import { StatusHero } from "./components/StatusHero";
 import { TopBar } from "./components/TopBar";
+import { useAdviceFlow } from "./hooks/useAdviceFlow";
 import { useAsyncResource } from "./hooks/useAsyncResource";
+import { useChartPreview } from "./hooks/useChartPreview";
 import { useChat } from "./hooks/useChat";
-import { useDecisionFlow } from "./hooks/useDecisionFlow";
+import { type DecisionOutcome, useDecisionFlow } from "./hooks/useDecisionFlow";
+import { buildAdviceCards } from "./lib/advice";
 import { formatDate } from "./lib/format";
 import type { Dashboard, Recommendation, ScenarioParams } from "./types/api";
 
@@ -33,6 +37,11 @@ function pickRecommendedOptionId(dashboard: Dashboard, recommendation: Recommend
   const llmChoice = recommendation?.recommended_option_id ?? null;
   if (llmChoice !== null && dashboard.options.some((option) => option.id === llmChoice)) return llmChoice;
   return dashboard.code_recommended_option_id;
+}
+
+function optionOutcome(outcome: DecisionOutcome | null) {
+  if (outcome === null) return null;
+  return { title: `Option ${outcome.optionId} approved: ${outcome.optionTitle}`, messages: outcome.messages };
 }
 
 function ChartSkeleton() {
@@ -56,13 +65,15 @@ function DashboardSkeleton() {
 
 export default function App() {
   const [params, setParams] = useState<ScenarioParams>(DEFAULT_PARAMS);
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetError, setResetError] = useState<ApiError | null>(null);
 
   const loadDashboard = useCallback((signal: AbortSignal) => api.getDashboard(params, signal), [params]);
   const dashboard = useAsyncResource(loadDashboard, { keepPreviousData: true });
+  // The CFO recommendations belong to the same scenario as the dashboard and are refreshed together with it.
+  const loadAdvice = useCallback((signal: AbortSignal) => api.getAdvice(params, signal), [params]);
+  const advice = useAsyncResource(loadAdvice, { keepPreviousData: true });
   const events = useAsyncResource(api.getEvents, { keepPreviousData: true });
   const decisionLog = useAsyncResource(api.getDecisions, { keepPreviousData: true });
 
@@ -78,14 +89,32 @@ export default function App() {
   );
   const recommendation = useAsyncResource(loadRecommendation, { enabled: board !== null });
 
+  // Like the explanation: the advisors' (slow) LLM wording follows every new set of recommendations.
+  const offer = advice.data;
+  const loadAdviceRecommendation = useCallback(
+    (signal: AbortSignal) => {
+      if (offer === null) return Promise.reject(new Error("Recommendations not loaded"));
+      const { as_of_date, horizon_days, buffer_eur } = offer;
+      return api.postAdviceRecommendation({ as_of_date, horizon_days, buffer_eur }, signal);
+    },
+    [offer],
+  );
+  const adviceRecommendation = useAsyncResource(loadAdviceRecommendation, { enabled: offer !== null });
+  const adviceCards = useMemo(
+    () => buildAdviceCards(offer?.proposals ?? [], adviceRecommendation.data),
+    [offer, adviceRecommendation.data],
+  );
+
   const reloadDashboard = dashboard.reload;
+  const reloadAdvice = advice.reload;
   const reloadEvents = events.reload;
   const reloadDecisions = decisionLog.reload;
   const refreshAll = useCallback(() => {
     reloadDashboard();
+    reloadAdvice();
     reloadEvents();
     reloadDecisions();
-  }, [reloadDashboard, reloadEvents, reloadDecisions]);
+  }, [reloadDashboard, reloadAdvice, reloadEvents, reloadDecisions]);
 
   // In the single-column layout the chat sits below everything else: bring the changed forecast into view.
   const mainRef = useRef<HTMLElement>(null);
@@ -98,19 +127,32 @@ export default function App() {
   // Decisions are taken on the dashboard on screen, and only while it reflects the latest request.
   const boardIsCurrent = !dashboard.loading && dashboard.error === null;
   const decisions = useDecisionFlow(board, boardIsCurrent, recommendation.data?.explanation ?? null, refreshAll);
+  const adviceIsCurrent = boardIsCurrent && !advice.loading && advice.error === null;
+  const adviceFlow = useAdviceFlow(offer, adviceCards, adviceIsCurrent, refreshAll);
+  const recommendedOptionId = board ? pickRecommendedOptionId(board, recommendation.data) : null;
+  const chart = useChartPreview(board, recommendedOptionId, adviceCards, adviceFlow.selected);
   const { startNewConversation } = chat;
   const { dismissOutcome } = decisions;
+  const { clearSelection, dismissOutcome: dismissAdviceOutcome } = adviceFlow;
+  const { reset: resetChartPreview } = chart;
+
+  /** Choices and announcements that refer to the scenario on screen and make no sense for another one. */
+  const forgetScenarioChoices = useCallback(() => {
+    resetChartPreview();
+    clearSelection();
+    dismissOutcome();
+    dismissAdviceOutcome();
+  }, [resetChartPreview, clearSelection, dismissOutcome, dismissAdviceOutcome]);
 
   const changeParams = useCallback(
     (patch: Partial<ScenarioParams>) => {
       setParams((current) => ({ ...current, ...patch }));
-      setSelectedOptionId(null);
-      dismissOutcome();
+      forgetScenarioChoices();
       if (patch.as_of_date !== undefined && patch.as_of_date !== params.as_of_date) {
         startNewConversation(`“Today” is now ${formatDate(patch.as_of_date)}. Started a new conversation.`);
       }
     },
-    [params.as_of_date, startNewConversation, dismissOutcome],
+    [params.as_of_date, startNewConversation, forgetScenarioChoices],
   );
 
   async function resetDemo() {
@@ -119,8 +161,7 @@ export default function App() {
     try {
       await api.resetDemo();
       setResetOpen(false);
-      setSelectedOptionId(null);
-      dismissOutcome();
+      forgetScenarioChoices();
       startNewConversation("Demo reset: all plans and decisions were deleted.");
       refreshAll();
     } catch (error) {
@@ -129,10 +170,6 @@ export default function App() {
       setResetBusy(false);
     }
   }
-
-  const recommendedOptionId = board ? pickRecommendedOptionId(board, recommendation.data) : null;
-  const previewOptionId = selectedOptionId ?? recommendedOptionId;
-  const previewOption = board?.options.find((option) => option.id === previewOptionId) ?? null;
 
   return (
     <div className="app">
@@ -152,7 +189,8 @@ export default function App() {
             <Icon name="chat" />
             Tell the assistant about your plans
           </a>
-          <OutcomeBanner outcome={decisions.outcome} onDismiss={decisions.dismissOutcome} />
+          <OutcomeBanner outcome={optionOutcome(decisions.outcome)} onDismiss={decisions.dismissOutcome} />
+          <OutcomeBanner outcome={adviceFlow.outcome} onDismiss={adviceFlow.dismissOutcome} />
 
           {dashboard.error ? (
             <ErrorNotice
@@ -170,7 +208,7 @@ export default function App() {
             <>
               <StatusHero dashboard={board} />
               <Suspense fallback={<ChartSkeleton />}>
-                <BalanceChart dashboard={board} previewOption={previewOption} />
+                <BalanceChart dashboard={board} preview={chart.preview} />
               </Suspense>
               <ExplanationCard
                 recommendation={recommendation}
@@ -181,9 +219,17 @@ export default function App() {
                 dashboard={board}
                 recommendation={recommendation.data}
                 recommendedOptionId={recommendedOptionId}
-                previewOptionId={previewOption?.id ?? null}
+                previewOptionId={chart.optionId}
                 decisions={decisions}
-                onPreview={setSelectedOptionId}
+                onPreview={chart.previewOption}
+              />
+              <AdviceSection
+                advice={advice}
+                recommendation={adviceRecommendation}
+                cards={adviceCards}
+                flow={adviceFlow}
+                chart={chart}
+                baseline={board.forecast.days}
               />
             </>
           ) : null}

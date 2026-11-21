@@ -47,6 +47,7 @@ body {
 h1,
 h2,
 h3,
+h4,
 p,
 dl,
 dd,
@@ -743,7 +744,8 @@ textarea {
 
 /* ---------- Explanation ---------- */
 
-.explanation {
+.explanation,
+.advice-summary__text {
   font-size: 1.02rem;
   line-height: 1.6;
   max-width: 75ch;
@@ -968,6 +970,108 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- CFO recommendations ---------- */
+
+.advice__summary {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.advice__headline {
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+.advice-group {
+  margin-top: 18px;
+}
+
+.advice-group__title {
+  margin-bottom: 10px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.proposal.is-selected {
+  border-color: var(--cb-petrol);
+  background: var(--surface-soft);
+}
+
+.proposal__checkbox {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--cb-petrol);
+  cursor: pointer;
+}
+
+.proposal__checkbox:disabled {
+  cursor: not-allowed;
+}
+
+.proposal__label {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.proposal__assumptions {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.proposal__assumptions-label {
+  font-weight: 700;
+}
+
+.proposal__assumptions ul {
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.tips {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-small);
+  font-size: 0.9rem;
+}
+
+.tip__label {
+  flex: none;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.9;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.advice__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 /* ---------- Notices ---------- */
 
 .notice {
@@ -1107,7 +1211,9 @@ textarea {
 }
 
 .plan__icon--credit_line,
-.plan__icon--payment_deferral {
+.plan__icon--payment_deferral,
+.plan__icon--term_deposit,
+.plan__icon--fx_prebuy {
   background: var(--violet-bg);
   color: var(--violet);
 }
@@ -1437,6 +1543,11 @@ textarea {
 .dialog__list {
   padding-left: 20px;
   list-style: disc;
+}
+
+/* The exact figure on its own line: a title may already name the amount in whole euros. */
+.dialog__amount {
+  display: block;
 }
 
 .dialog__actions {

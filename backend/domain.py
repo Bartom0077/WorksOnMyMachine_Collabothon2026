@@ -14,6 +14,8 @@ class EventType(StrEnum):
     INFLOW = "inflow"
     PAYMENT_DEFERRAL = "payment_deferral"
     CREDIT_LINE = "credit_line"
+    TERM_DEPOSIT = "term_deposit"  # created by the CFO advisors: category "investment" or "tax_reserve"
+    FX_PREBUY = "fx_prebuy"  # created by the CFO advisors: CHF bought today for the remaining Zurich instalments
 
 
 class EventSource(StrEnum):

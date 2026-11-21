@@ -227,8 +227,9 @@ def get_fixed_obligations(
 @mcp.tool()
 def list_planned_events(ctx: Context) -> dict:
     """Planned events already saved for the forecast (closures, one-off expenses and inflows, approved
-    rescue actions) that end after the analysis date, i.e. still affect the forecast. Each has an "id" and a
-    "source": "chat" = told by the owner in the chat, "agent" = measure of an approved rescue option."""
+    rescue actions and CFO recommendations) that end after the analysis date, i.e. still affect the forecast.
+    Each has an "id" and a "source": "chat" = told by the owner in the chat, "agent" = measure of an approved
+    rescue option or CFO recommendation."""
     return _run(ctx, planned_events.list_planned_events)
 
 

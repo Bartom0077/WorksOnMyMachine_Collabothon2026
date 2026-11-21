@@ -27,6 +27,9 @@ const FIGURES = {
   optionIds: ["A", "B", "C", "E"],
   decemberBalance: "€33,266.35",
   decemberSurplus: "€27,000.00",
+  // 31 Dec 2025: the income tax the prepayments do not cover, and what is left of the surplus after reserving it.
+  decemberTaxReserve: "€14,849.65",
+  decemberInvestmentDeposit: "€12,000.00",
 };
 
 const screenshotDir = process.env.SCREENSHOT_DIR;
@@ -65,6 +68,18 @@ test.describe("demo story on the deployed application", () => {
     return page.getByRole("region", { name: "My plans" });
   }
 
+  function cfoRecommendations(): Locator {
+    return page.getByRole("region", { name: "CFO recommendations" });
+  }
+
+  /** The deposit card of one advisor. Titles are the model's wording, so the card is found by a code-written fact. */
+  function depositCard(advisor: string): Locator {
+    return cfoRecommendations()
+      .getByRole("group", { name: advisor, exact: true })
+      .getByRole("group")
+      .filter({ has: page.getByText("Interest earned", { exact: true }) });
+  }
+
   function explanationBadge(): Locator {
     return page.getByText(/^(AI explanation|Standard explanation \(AI unavailable\))$/);
   }
@@ -80,7 +95,7 @@ test.describe("demo story on the deployed application", () => {
     page = await browser.newPage({ viewport: DESKTOP });
     page.on("requestfinished", (request) => {
       const path = new URL(request.url()).pathname;
-      if (path === "/api/chat" || path === "/api/recommendation") {
+      if (path === "/api/chat" || path === "/api/recommendation" || path === "/api/advice/recommendation") {
         console.log(`[latency] POST ${path}: ${(request.timing().responseEnd / 1000).toFixed(1)} s`);
       }
     });
@@ -312,5 +327,82 @@ test.describe("demo story on the deployed application", () => {
     const stored = (await (await page.request.get("/api/events")).json()) as { events: unknown[] };
     expect(stored.events).toHaveLength(0);
     await captureKeyState("12-removed-through-chat");
+  });
+
+  // --- CFO recommendations on a day with spare cash (31 Dec 2025: all CHF instalments are paid) ---
+
+  test("with spare cash the CFO recommends a tax reserve and an investment deposit", async () => {
+    expect((await page.request.post("/api/demo/reset")).status()).toBe(204);
+    await page.goto("/");
+    await page.getByLabel("Today").fill("2025-12-31");
+    await expect(heroFigure(FIGURES.decemberBalance)).toBeVisible();
+    await expect(page.getByText("Status: On track")).toBeVisible();
+
+    // The proposals and their figures come from code and are on screen before the model's wording arrives.
+    // No CHF instalment is left, so the currency advisor stays silent.
+    const section = cfoRecommendations();
+    await expect(section.getByRole("heading", { level: 3 })).toHaveText(["Tax", "Investments"]);
+    await expect(depositCard("Tax")).toHaveCount(1);
+    await expect(depositCard("Tax")).toContainText(FIGURES.decemberTaxReserve);
+    await expect(depositCard("Tax")).toContainText("On track");
+    await expect(depositCard("Investments")).toHaveCount(1);
+    await expect(depositCard("Investments")).toContainText(FIGURES.decemberInvestmentDeposit);
+    await expect(section.getByRole("button", { name: "Approve selected" })).toBeDisabled();
+
+    await expect(section.getByRole("status", { name: "Loading the summary of the recommendations" })).toBeHidden({
+      timeout: LLM_TIMEOUT_MS,
+    });
+    const badge = section.getByText(/^(AI summary|Standard summary \(AI unavailable\))$/);
+    await expect(badge).toBeVisible({ timeout: LLM_TIMEOUT_MS });
+    console.log(`[CFO summary] ${await badge.innerText()}`);
+    await waitForExplanation();
+    await captureKeyState("13-cfo-recommendations");
+  });
+
+  test("approving both deposits together is simulated and recorded per recommendation", async () => {
+    const section = cfoRecommendations();
+    await depositCard("Tax").getByRole("checkbox").check();
+    await depositCard("Investments").getByRole("checkbox").check();
+    await expect(page.getByRole("list", { name: "Chart legend" })).toContainText("Forecast with recommendations T1 + I1");
+
+    await section.getByRole("button", { name: "Approve selected" }).click();
+    const dialog = page.getByRole("dialog", { name: "Approve 2 recommendations?" });
+    await expect(dialog.getByText("SIMULATED", { exact: true })).toBeVisible();
+    await expect(dialog).toContainText(FIGURES.decemberTaxReserve);
+    await expect(dialog).toContainText(FIGURES.decemberInvestmentDeposit);
+    await expect(dialog.getByRole("listitem").last()).toContainText("(simulated)");
+    await capture("14-cfo-approval-dialog-desktop");
+
+    await dialog.getByRole("button", { name: "Approve (simulated)" }).click();
+    await expect(dialog).toBeHidden();
+
+    const banner = page.getByRole("status").filter({ hasText: "2 recommendations approved" });
+    await expect(banner.getByRole("listitem").first()).toContainText("(simulated)");
+    await expect(page.getByText("Status: On track")).toBeVisible();
+
+    const deposits = plans().getByRole("listitem").filter({ hasText: "Term deposit ·" });
+    await expect(deposits).toHaveCount(2);
+    await expect(deposits.first()).toContainText("From an approved recommendation");
+    for (const id of ["T1", "I1"]) {
+      const row = page.getByRole("row", { name: new RegExp(`Recommendation ${id}: `) });
+      await expect(row).toHaveCount(1);
+      await expect(row).toContainText("Approved");
+      await expect(row).toContainText("SIMULATED");
+    }
+    // What was approved is part of the forecast now and is not proposed again.
+    await expect(depositCard("Tax")).toHaveCount(0);
+    await expect(depositCard("Investments")).toHaveCount(0);
+    await captureKeyState("15-cfo-approved");
+  });
+
+  test("resetting the demo removes the deposits and their decisions", async () => {
+    await page.getByRole("button", { name: "Reset demo" }).click();
+    await page.getByRole("dialog", { name: "Reset the demo?" }).getByRole("button", { name: "Delete plans and decisions" }).click();
+
+    await expect(page.getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
+    await expect(plans().getByText(/No plans yet/)).toBeVisible();
+    await expect(page.getByText(/No decisions yet/)).toBeVisible();
+    await expect(depositCard("Tax")).toHaveCount(1);
+    await expect(depositCard("Investments")).toHaveCount(1);
   });
 });

@@ -1,4 +1,5 @@
 import type { AsyncResource } from "../hooks/useAsyncResource";
+import { isProposalId } from "../lib/advice";
 import { creditLineNote, formatDate, formatDateTime, formatEur } from "../lib/format";
 import type { Decision, DecisionsResponse } from "../types/api";
 import { EmptyState, ErrorNotice, Skeleton } from "./Feedback";
@@ -40,6 +41,7 @@ function DecisionRow({ decision }: { decision: Decision }) {
       <td>{formatDateTime(decision.decided_at)}</td>
       <td>{formatDate(decision.as_of_date)}</td>
       <th scope="row">
+        {isProposalId(decision.option_id) ? "Recommendation " : ""}
         {decision.option_id}: {decision.option_title}
       </th>
       <td>
@@ -71,7 +73,7 @@ function DecisionRow({ decision }: { decision: Decision }) {
   );
 }
 
-/** Audit trail of approved, rejected and later withdrawn options. */
+/** Audit trail of approved, rejected and later withdrawn options and CFO recommendations. */
 export function DecisionHistory({ decisions }: Props) {
   const list = decisions.data?.decisions ?? null;
 
@@ -87,7 +89,7 @@ export function DecisionHistory({ decisions }: Props) {
       ) : null}
       {list === null && decisions.loading ? <Skeleton label="Loading the decision history" lines={2} /> : null}
       {list !== null && list.length === 0 ? (
-        <EmptyState>No decisions yet. Options you approve or reject are recorded here.</EmptyState>
+        <EmptyState>No decisions yet. Options and recommendations you approve or reject are recorded here.</EmptyState>
       ) : null}
       {list !== null && list.length > 0 ? (
         <div className="table-scroll" tabIndex={0} role="region" aria-labelledby="decisions-title">
@@ -96,7 +98,7 @@ export function DecisionHistory({ decisions }: Props) {
               <tr>
                 <th scope="col">Decided</th>
                 <th scope="col">“Today” was</th>
-                <th scope="col">Option</th>
+                <th scope="col">Option or recommendation</th>
                 <th scope="col">Decision</th>
                 <th scope="col">Execution</th>
                 <th scope="col">Lowest balance, before → after</th>

@@ -56,8 +56,8 @@ GRANT INSERT (event_type, date_from, date_to, amount_eur, description, original_
 GRANT DELETE ON planned_events TO ${ROLE};
 GRANT USAGE ON SEQUENCE planned_events_id_seq TO ${ROLE};
 -- Row level security: the role reads every planned event but may insert and delete only chat rows, so it can
--- neither create nor remove an agent event (payment_deferral, credit_line). Owner and superuser bypass these
--- policies.
+-- neither create nor remove an agent event (payment_deferral, credit_line, term_deposit, fx_prebuy). Owner and
+-- superuser bypass these policies.
 ALTER TABLE planned_events ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS mcp_read_events ON planned_events;
 CREATE POLICY mcp_read_events ON planned_events FOR SELECT TO ${ROLE} USING (true);
