@@ -1,5 +1,5 @@
 import type { AsyncResource } from "../hooks/useAsyncResource";
-import { formatDate, formatDateTime, formatEur } from "../lib/format";
+import { creditLineNote, formatDate, formatDateTime, formatEur } from "../lib/format";
 import type { Decision, DecisionsResponse } from "../types/api";
 import { EmptyState, ErrorNotice, Skeleton } from "./Feedback";
 import { Icon } from "./Icon";
@@ -12,6 +12,7 @@ interface Props {
 function DecisionRow({ decision }: { decision: Decision }) {
   const { snapshot } = decision;
   const approved = decision.status === "approved";
+  const creditNote = creditLineNote(snapshot.credit_limit_after_eur, snapshot.min_balance_after_eur);
   return (
     <tr>
       <td>{formatDateTime(decision.decided_at)}</td>
@@ -26,7 +27,11 @@ function DecisionRow({ decision }: { decision: Decision }) {
         </span>
       </td>
       <td>
-        <span className="badge badge--simulated">{decision.execution}</span>
+        {approved ? (
+          <span className="badge badge--simulated">{decision.execution}</span>
+        ) : (
+          <span className="muted">Not executed</span>
+        )}
       </td>
       <td>
         <div className="before-after">
@@ -39,6 +44,7 @@ function DecisionRow({ decision }: { decision: Decision }) {
             {formatEur(snapshot.min_balance_after_eur)} <StatusChip status={snapshot.status_after} />
           </span>
         </div>
+        {creditNote !== null ? <p className="muted">{creditNote}</p> : null}
       </td>
     </tr>
   );

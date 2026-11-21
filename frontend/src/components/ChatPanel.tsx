@@ -122,15 +122,21 @@ export function ChatPanel({ chat }: Props) {
     if (log !== null) log.scrollTop = log.scrollHeight;
   }, [lastEntryId, chat.sending, chat.failed]);
 
-  function submit(text: string) {
-    chat.send(text);
+  /** Sends a ready-made message (suggested prompt, confirmation) without touching what the owner is typing. */
+  function sendPreset(text: string) {
+    if (chat.send(text)) setPlaceholder(DEFAULT_PLACEHOLDER);
+  }
+
+  /** Sends the typed message; the draft is kept when it was not accepted (a reply is still pending). */
+  function submitDraft() {
+    if (!chat.send(draft)) return;
     setDraft("");
     setPlaceholder(DEFAULT_PLACEHOLDER);
   }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    submit(draft);
+    submitDraft();
   }
 
   function startCorrection() {
@@ -150,6 +156,10 @@ export function ChatPanel({ chat }: Props) {
           </h2>
           <p className="chat__subtitle">Tell me your plans. I ask before saving anything.</p>
         </div>
+        <a className="chat__back" href="#main">
+          <Icon name="arrowUp" size={14} />
+          Back to forecast
+        </a>
       </header>
 
       <div ref={logRef} className="chat__log" role="log" aria-live="polite" aria-label="Conversation" tabIndex={0}>
@@ -165,7 +175,7 @@ export function ChatPanel({ chat }: Props) {
             key={entry.id}
             entry={entry}
             actionable={entry.id === lastEntryId && !chat.sending}
-            onConfirm={() => submit(CONFIRM_MESSAGE)}
+            onConfirm={() => sendPreset(CONFIRM_MESSAGE)}
             onCorrect={startCorrection}
           />
         ))}
@@ -199,7 +209,7 @@ export function ChatPanel({ chat }: Props) {
       <ul className="prompts" aria-label="Suggested messages">
         {SUGGESTED_PROMPTS.map((prompt) => (
           <li key={prompt}>
-            <button type="button" className="prompt" onClick={() => submit(prompt)} disabled={chat.sending}>
+            <button type="button" className="prompt" onClick={() => sendPreset(prompt)} disabled={chat.sending}>
               {prompt}
             </button>
           </li>
@@ -217,11 +227,13 @@ export function ChatPanel({ chat }: Props) {
           rows={2}
           value={draft}
           placeholder={placeholder}
+          aria-describedby={chat.sending && draft.trim() !== "" ? "chat-wait-hint" : undefined}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            // Enter confirms an IME composition; only a plain Enter outside one sends the message.
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
-              submit(draft);
+              submitDraft();
             }
           }}
         />
@@ -233,6 +245,11 @@ export function ChatPanel({ chat }: Props) {
         >
           <Icon name="send" size={18} />
         </button>
+        {chat.sending && draft.trim() !== "" ? (
+          <p id="chat-wait-hint" className="chat__hint">
+            Waiting for the assistant’s reply. You can send this as soon as it arrives.
+          </p>
+        ) : null}
       </form>
     </aside>
   );

@@ -1,7 +1,49 @@
+# Frontend (frontend/): React build served by nginx, which also proxies /api/* to the backend Service.
+# The Route below is the only public entry point of the application.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: autonomous-cfo
+  namespace: autonomous-cfo
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: autonomous-cfo
+  namespace: autonomous-cfo
+  labels:
+    app: autonomous-cfo
+spec:
+  failedBuildsHistoryLimit: 3
+  successfulBuildsHistoryLimit: 3
+  output:
+    to:
+      kind: ImageStreamTag
+      name: autonomous-cfo:latest
+  source:
+    type: Git
+    git:
+      uri: https://github.com/Bartom0077/WorksOnMyMachine_Collabothon2026.git
+      ref: main
+    contextDir: frontend
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  resources:  # npm ci + TypeScript + Vite need more than the default build pod gets
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  triggers: []
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: autonomous-cfo
+  namespace: autonomous-cfo
   labels:
     app: autonomous-cfo
   annotations:
@@ -55,6 +97,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: autonomous-cfo
+  namespace: autonomous-cfo
   labels:
     app: autonomous-cfo
 spec:
@@ -69,6 +112,7 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: autonomous-cfo
+  namespace: autonomous-cfo
   labels:
     app: autonomous-cfo
   annotations:

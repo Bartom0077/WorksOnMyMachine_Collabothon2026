@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { chatProposal, chatSaved, closureEvent, greenDashboard, redDashboard } from "../fixtures/data";
+import { approvedDashboard, chatProposal, chatSaved, closureEvent, greenDashboard, redDashboard } from "../fixtures/data";
 import { apiError, mockApi } from "../fixtures/mockApi";
 
 test.describe("assistant chat", () => {
@@ -51,6 +51,59 @@ test.describe("assistant chat", () => {
     });
     // Buttons of an answered confirmation are no longer actionable.
     await expect(confirmation.getByRole("button", { name: "Yes, include it" })).toBeDisabled();
+  });
+
+  test("Enter while a reply is pending keeps the typed message", async ({ page }) => {
+    const answer = { ...chatSaved, events_changed: false, saved_events: [] };
+    const api = await mockApi(page, { chatQueue: [answer, answer], chatDelayMs: 1500 });
+    await page.goto("/");
+
+    const input = page.getByLabel("Message to the assistant");
+    await input.fill("first message");
+    await input.press("Enter");
+    await expect(input).toHaveValue("");
+
+    await input.fill("follow-up typed while waiting");
+    await input.press("Enter");
+    await expect(input).toHaveValue("follow-up typed while waiting");
+    await expect(page.getByText(/Waiting for the assistant’s reply/)).toBeVisible();
+    expect(api.requests.chat).toHaveLength(1);
+
+    // Once the reply is in, the kept draft can be sent.
+    await expect(page.getByText(/Waiting for the assistant’s reply/)).toHaveCount(0);
+    await input.press("Enter");
+    await expect(input).toHaveValue("");
+    await expect.poll(() => api.requests.chat.map((request) => request.message)).toEqual([
+      "first message",
+      "follow-up typed while waiting",
+    ]);
+  });
+
+  test("a plan saved by a reply to an abandoned conversation still refreshes the forecast", async ({ page }) => {
+    const api = await mockApi(page, {
+      dashboard: greenDashboard,
+      events: [],
+      chatQueue: [chatSaved],
+      chatDelayMs: 1500,
+      afterChat: (_response, state) => {
+        state.dashboard = redDashboard;
+        state.events = [closureEvent];
+      },
+    });
+    await page.goto("/");
+    await expect(page.getByText("No action needed")).toBeVisible();
+
+    await page.getByLabel("Message to the assistant").fill("Yes, please include it");
+    await page.getByLabel("Message to the assistant").press("Enter");
+    // Changing "today" starts a new conversation while the reply that saves the plan is still on its way.
+    await page.getByLabel("Today").fill("2025-05-11");
+    await expect(page.getByText("“Today” is now 11 May 2025. Started a new conversation.")).toBeVisible();
+
+    await expect(page.getByRole("region", { name: "My plans" }).getByText("Holiday closure")).toBeVisible();
+    await expect(page.getByText("Status: Shortfall ahead")).toBeVisible();
+    // The outdated reply itself is not shown in the new conversation.
+    await expect(page.getByText("Added to your plans: Holiday closure")).toHaveCount(0);
+    expect(api.requests.chat).toHaveLength(1);
   });
 
   test("“Correct it” moves focus to the message box with a hint", async ({ page }) => {
@@ -110,6 +163,52 @@ test.describe("my plans", () => {
     await expect(plans.getByRole("listitem")).toHaveCount(1);
     expect(api.requests.deletedEventIds).toEqual([12]);
     await expect.poll(() => api.requests.dashboard.length).toBeGreaterThan(dashboardCalls);
+  });
+
+  test("only one plan is removed at a time", async ({ page }) => {
+    const api = await mockApi(page);
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/events/12", async (route) => {
+      await held;
+      await route.fallback();
+    });
+    await page.goto("/");
+
+    const plans = page.getByRole("region", { name: "My plans" });
+    await plans.getByRole("button", { name: "Remove plan: New pizza oven" }).click();
+    await expect(plans.getByRole("button", { name: "Remove plan: New pizza oven" })).toHaveText("Removing…");
+    await expect(plans.getByRole("button", { name: "Remove plan: Holiday closure" })).toBeDisabled();
+
+    release();
+    await expect(plans.getByRole("listitem")).toHaveCount(1);
+    await expect(plans.getByRole("button", { name: "Remove plan: Holiday closure" })).toBeEnabled();
+    expect(api.requests.deletedEventIds).toEqual([12]);
+  });
+
+  test("removing a measure from an approved option asks for confirmation first", async ({ page }) => {
+    const api = await mockApi(page, { dashboard: approvedDashboard, events: approvedDashboard.events });
+    await page.goto("/");
+
+    await page.getByRole("button", { name: "Withdraw option: Credit line of €15,000" }).click();
+    const dialog = page.getByRole("dialog", { name: "Withdraw this approved option?" });
+    await expect(dialog).toContainText("was put in place by an option you approved");
+    // The whole option is withdrawn, so its other measure is named too.
+    await expect(dialog.getByRole("listitem")).toHaveText([/Transfer to Zurich/, "Credit line of €15,000"]);
+    expect(api.requests.deletedEventIds).toEqual([]);
+
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toBeHidden();
+    expect(api.requests.deletedEventIds).toEqual([]);
+
+    await page.getByRole("button", { name: "Withdraw option: Credit line of €15,000" }).click();
+    await dialog.getByRole("button", { name: "Withdraw option" }).click();
+    await expect(dialog).toBeHidden();
+    expect(api.requests.deletedEventIds).toEqual([22]);
+    const plans = page.getByRole("region", { name: "My plans" });
+    await expect(plans.getByText("From an approved option")).toHaveCount(0);
   });
 
   test("shows an error when a plan cannot be removed", async ({ page }) => {

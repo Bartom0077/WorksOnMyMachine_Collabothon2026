@@ -3,6 +3,10 @@
 The model gets no tools here. Everything it may quote is in the dossier, which the backend computes from the
 same database the MCP server reads; the MCP KPI snapshot carries its own 30-day forecast that ignores planned
 events and would contradict the dossier. Whatever goes wrong, the caller gets the deterministic texts instead.
+
+The model writes only what code can check: the explanation, its choice and the reason for it. The headline and
+the one-line comment per option always come from the engine, so the most prominent sentence and every option's
+stated outcome can never contradict the figures next to them.
 """
 from __future__ import annotations
 
@@ -13,15 +17,21 @@ import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
-from typing import Any, Iterator, Optional
+from decimal import Decimal
+from typing import Any, Iterator, Optional, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from config import LLM_RECOMMENDATION_MAX_OUTPUT_TOKENS, RECOMMENDATION_CACHE_SIZE
 from domain import Dashboard, FallbackRecommendation
 from llm import JsonSchemaFormat, LlmClient, LlmError, LlmRequest, LlmResponse
-from llm_prompts import RECOMMENDATION_INSTRUCTIONS, recommendation_dossier, recommendation_input
+from llm_prompts import (
+    DOSSIER_MONEY_KEYS,
+    FIXED_COSTS_KEY,
+    RECOMMENDATION_INSTRUCTIONS,
+    recommendation_dossier,
+    recommendation_input,
+)
 from service import build_fallback_recommendation
 
 logger = logging.getLogger(__name__)
@@ -30,10 +40,26 @@ SOURCE_LLM = "llm"
 SOURCE_FALLBACK = "fallback"
 
 _TEXT = Field(min_length=1, max_length=2000)
-_AMOUNT = r"\d[\d,]*(?:\.\d+)?"
-_CURRENCY_AMOUNT = re.compile(rf"(?:€|EUR)\s?[-−]?\s?({_AMOUNT})(k\b)?|({_AMOUNT})(k)?\s?(?:€|EUR\b|euros?\b)", re.IGNORECASE)
-_NUMBER = re.compile(_AMOUNT)
 _THOUSAND = Decimal("1000")
+_WHOLE_EURO = Decimal("1")
+# A number in running text with its optional sign, currency marker and "k" suffix.
+_AMOUNT_TOKEN = re.compile(
+    r"(?P<minus>[-−]\s?)?(?P<lead>(?:€|EUR|\$)\s?)?(?P<inner_minus>[-−]\s?)?"
+    r"(?P<digits>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+    r"(?P<thousands>k\b)?(?P<trail>\s?(?:€|EUR\b|euros?\b))?(?P<percent>\s?%)?",
+    re.IGNORECASE)
+# Words that make the amount right next to them a shortfall ("€300 short", "a shortfall of €300").
+_SHORT_BEFORE = re.compile(
+    r"(?:shortfall|short|overdrawn|deficit|gap|minus|in the red|below zero|negative balance)"
+    r"(?:\s+(?:of|by|is|at))?(?:\s+(?:about|around|roughly|nearly|almost))?\s*$", re.IGNORECASE)
+_SHORT_AFTER = re.compile(r"\s*(?:short\b|below zero|overdrawn|in the red)", re.IGNORECASE)
+_NOT_POSTPONABLE = re.compile(
+    r"(?:cannot|can't|can not|could not|couldn't|must not|not possible to|impossible to)\s+(?:be\s+)?"
+    r"(?:postponed?|deferred|defer|delayed|delay|moved|move)|not postponable|non-postponable", re.IGNORECASE)
+_ABOVE_ZERO_CLAIMS = ("above zero", "positive balance", "stays positive", "stay positive", "remains positive",
+                      "out of the red", "in the black", "no shortfall")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_MIN_KEYWORD_CHARS = 4
 
 
 @dataclass(frozen=True)
@@ -52,11 +78,9 @@ class LlmRecommendation(BaseModel):
 
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
-    headline: str = _TEXT
     explanation: str = _TEXT
     recommended_option_id: Optional[str]
     rationale: str = _TEXT
-    option_comments: dict[str, str]
 
 
 class InvalidRecommendationError(Exception):
@@ -116,22 +140,21 @@ class RecommendationService:
 
     def _ask_model(self, dashboard: Dashboard, dossier: dict, fallback: FallbackRecommendation) -> Recommendation:
         allowed_ids = selectable_option_ids(dashboard)
-        all_ids = list(fallback.option_comments)
         response = self._client.respond(LlmRequest(
             instructions=RECOMMENDATION_INSTRUCTIONS,
             input=recommendation_input(dossier),
             max_output_tokens=LLM_RECOMMENDATION_MAX_OUTPUT_TOKENS,
-            json_schema=JsonSchemaFormat("recommendation", recommendation_schema(allowed_ids, all_ids)),
+            json_schema=JsonSchemaFormat("recommendation", recommendation_schema(allowed_ids)),
         ))
         parsed = validate_recommendation(response, allowed_ids, dossier)
         return Recommendation(
             source=SOURCE_LLM,
             fallback_reason=None,
-            headline=parsed.headline,
+            headline=fallback.headline,
             explanation=parsed.explanation,
             recommended_option_id=parsed.recommended_option_id,
             rationale=parsed.rationale,
-            option_comments=merged_option_comments(parsed.option_comments, fallback.option_comments),
+            option_comments=dict(fallback.option_comments),
         )
 
 
@@ -157,25 +180,14 @@ def selectable_option_ids(dashboard: Dashboard) -> list[str]:
     return [option.id for option in dashboard.options if not option.rejected]
 
 
-def recommendation_schema(allowed_ids: list[str], all_ids: list[str]) -> dict:
+def recommendation_schema(allowed_ids: list[str]) -> dict:
     """JSON schema for guided decoding: the option id can only be one that is really on offer."""
     option_id: dict[str, Any] = {"type": "string", "enum": allowed_ids} if allowed_ids else {"type": "null"}
     text = {"type": "string"}
     return {
         "type": "object",
-        "properties": {
-            "headline": text,
-            "explanation": text,
-            "recommended_option_id": option_id,
-            "rationale": text,
-            "option_comments": {
-                "type": "object",
-                "properties": {option: text for option in all_ids},
-                "required": all_ids,
-                "additionalProperties": False,
-            },
-        },
-        "required": ["headline", "explanation", "recommended_option_id", "rationale", "option_comments"],
+        "properties": {"explanation": text, "recommended_option_id": option_id, "rationale": text},
+        "required": ["explanation", "recommended_option_id", "rationale"],
         "additionalProperties": False,
     }
 
@@ -194,10 +206,18 @@ def validate_recommendation(response: LlmResponse, allowed_ids: list[str], dossi
     if parsed.recommended_option_id not in (allowed_ids or [None]):
         raise InvalidRecommendationError(
             "llm_unknown_option", f"The model chose {parsed.recommended_option_id!r}; on offer: {allowed_ids}.")
-    invented = ungrounded_amounts(_all_texts(parsed), dossier)
+    text = f"{parsed.explanation} {parsed.rationale}"
+    invented = ungrounded_amounts(text, dossier)
     if invented:
         raise InvalidRecommendationError(
             "llm_ungrounded_numbers", f"The model quoted amounts that are not in the dossier: {invented}.")
+    unsigned = shortfalls_quoted_as_positive(text, dossier)
+    if unsigned:
+        raise InvalidRecommendationError(
+            "llm_sign_dropped", f"The model quoted negative balances without saying they are negative: {unsigned}.")
+    contradiction = contradiction_with_engine(parsed, dossier)
+    if contradiction:
+        raise InvalidRecommendationError("llm_contradicts_engine", contradiction)
     return parsed
 
 
@@ -214,59 +234,114 @@ def extract_json_object(text: str) -> Optional[dict]:
     return None
 
 
-def merged_option_comments(from_model: dict[str, str], from_code: dict[str, str]) -> dict[str, str]:
-    """One comment per offered option: the model's when it gave a non-empty one, otherwise the code's."""
-    return {option_id: from_model.get(option_id) or comment for option_id, comment in from_code.items()}
+@dataclass(frozen=True)
+class QuotedAmount:
+    raw: str
+    value: Decimal  # signed: negative when written with a minus or described as a shortfall
+    is_money: bool  # carries a currency marker, a thousands separator or decimals (not "7 weeks", "9%")
 
 
 def ungrounded_amounts(text: str, dossier: dict) -> list[str]:
     """Money amounts in the model's text that do not appear in the dossier (rounding of a real figure is fine)."""
-    known = sorted(set(_dossier_numbers(dossier)))
-    return [raw for raw, amount in _quoted_amounts(text) if not any(_matches(amount, value) for value in known)]
+    known = dossier_amounts(dossier)
+    return [quoted.raw for quoted in quoted_amounts(text)
+            if quoted.is_money and not any(_matches(quoted.value, value) for value in known)]
 
 
-def _all_texts(parsed: LlmRecommendation) -> str:
-    return " ".join([parsed.headline, parsed.explanation, parsed.rationale, *parsed.option_comments.values()])
+def shortfalls_quoted_as_positive(text: str, dossier: dict) -> list[str]:
+    """Amounts that exist in the dossier only as negative figures but are written as if they were positive."""
+    known = dossier_amounts(dossier)
+    dropped = []
+    for quoted in quoted_amounts(text):
+        matching = [value for value in known if _matches(quoted.value, value)]
+        if quoted.is_money and quoted.value > 0 and matching and all(value < 0 for value in matching):
+            dropped.append(quoted.raw)
+    return dropped
 
 
-def _quoted_amounts(text: str) -> Iterator[tuple[str, Decimal]]:
-    for match in _CURRENCY_AMOUNT.finditer(text):
-        digits = match.group(1) or match.group(3)
-        thousands = match.group(2) or match.group(4)
-        amount = _to_decimal(digits)
-        if amount is not None:
-            yield match.group(0).strip(), amount * _THOUSAND if thousands else amount
+def contradiction_with_engine(parsed: LlmRecommendation, dossier: dict) -> Optional[str]:
+    """A statement that contradicts a non-numeric fact of the dossier, or None. Deliberately narrow: it covers
+    the two kinds of false statement seen from the model (a postponable cost called fixed for good, an option
+    said to keep the balance above zero while its lowest balance is negative)."""
+    text = f"{parsed.explanation} {parsed.rationale}"
+    for label in _postponable_cost_labels(dossier):
+        keywords = _keywords(label)
+        for sentence in _SENTENCE_END.split(text):
+            if _NOT_POSTPONABLE.search(sentence) and any(keyword in sentence.lower() for keyword in keywords):
+                return f"The model says that \"{label}\" cannot be postponed, but the engine marks it postponable."
+    option = _dossier_option(dossier, parsed.recommended_option_id)
+    if option is None:
+        return None
+    rationale = parsed.rationale.lower()
+    if option["lowest_balance_with_this_option"] < 0 and any(claim in rationale for claim in _ABOVE_ZERO_CLAIMS):
+        return f"The model says option {option['id']} keeps the balance above zero; its lowest balance is negative."
+    if option["result"] != "GREEN" and "green" in rationale:
+        return f"The model calls option {option['id']} green; the engine's result is {option['result']}."
+    return None
 
 
-def _dossier_numbers(node: Any) -> Iterator[Decimal]:
-    """Every number in the dossier, including those written inside its texts, as absolute values."""
+def dossier_amounts(dossier: dict) -> list[Decimal]:
+    """Every amount of money in the dossier, signed: the money-typed numbers and the amounts in its texts.
+    Dates, ids, day counts and other numbers are not money and can never ground a quoted amount."""
+    return sorted(set(_money_values(dossier, key=None)))
+
+
+def quoted_amounts(text: str) -> Iterator[QuotedAmount]:
+    for match in _AMOUNT_TOKEN.finditer(text):
+        if match.group("percent"):
+            continue
+        digits = match.group("digits")
+        amount = Decimal(digits.replace(",", ""))
+        if match.group("thousands"):
+            amount *= _THOUSAND
+        has_currency = bool(match.group("lead") or match.group("trail"))
+        negative = bool(match.group("minus") or match.group("inner_minus")) or _described_as_shortfall(text, match)
+        yield QuotedAmount(match.group(0).strip(), -amount if negative else amount,
+                           is_money=has_currency or "," in digits or "." in digits)
+
+
+def _described_as_shortfall(text: str, match: re.Match) -> bool:
+    return bool(_SHORT_BEFORE.search(text[:match.start()]) or _SHORT_AFTER.match(text[match.end():]))
+
+
+def _money_values(node: Any, key: Optional[str]) -> Iterator[Decimal]:
     if isinstance(node, dict):
-        for value in node.values():
-            yield from _dossier_numbers(value)
+        for name, value in node.items():
+            yield from _money_values(value, name)
     elif isinstance(node, list):
         for value in node:
-            yield from _dossier_numbers(value)
+            yield from _money_values(value, key)
     elif isinstance(node, bool) or node is None:
         return
     elif isinstance(node, (int, float)):
-        yield abs(Decimal(str(node)))
+        if key in DOSSIER_MONEY_KEYS:
+            yield Decimal(str(node))
     elif isinstance(node, str):
-        for match in _NUMBER.finditer(node):
-            amount = _to_decimal(match.group(0))
-            if amount is not None:
-                yield amount
-
-
-def _to_decimal(digits: str) -> Optional[Decimal]:
-    try:
-        return Decimal(digits.replace(",", ""))
-    except InvalidOperation:
-        return None
+        yield from (quoted.value for quoted in quoted_amounts(node) if quoted.is_money)
 
 
 def _matches(quoted: Decimal, known: Decimal) -> bool:
-    """Equal, or the known figure rounded to whole euros, tens, hundreds or thousands."""
+    """The same figure, cents dropped, or rounded to tens, hundreds or thousands - but never by more than its
+    second significant digit (22,098 may become 22,000; 2,025 may not become 2,000). The sign is ignored here."""
+    quoted, known = abs(quoted), abs(known)
+    if abs(quoted - known) < _WHOLE_EURO:
+        return True
     for step in (Decimal("1000"), Decimal("100"), Decimal("10")):
         if quoted % step == 0 and quoted != 0:
-            return abs(quoted - known) <= step / 2
-    return abs(quoted - known) < 1
+            return known >= step * 10 and abs(quoted - known) <= step / 2
+    return False
+
+
+def _postponable_cost_labels(dossier: dict) -> Sequence[str]:
+    costs = dossier.get(FIXED_COSTS_KEY)
+    if not isinstance(costs, list):
+        return ()
+    return [cost["label"] for cost in costs if cost["can_be_postponed"]]
+
+
+def _keywords(label: str) -> list[str]:
+    return [word for word in re.findall(r"[a-z]+", label.lower()) if len(word) >= _MIN_KEYWORD_CHARS]
+
+
+def _dossier_option(dossier: dict, option_id: Optional[str]) -> Optional[dict]:
+    return next((option for option in dossier.get("options", []) if option["id"] == option_id), None)

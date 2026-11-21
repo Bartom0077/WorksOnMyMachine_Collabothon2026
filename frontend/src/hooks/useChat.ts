@@ -25,7 +25,8 @@ export interface Chat {
   entries: ChatEntry[];
   sending: boolean;
   failed: FailedMessage | null;
-  send: (message: string) => void;
+  /** Returns false when the message was not accepted (blank, or a reply is still pending). */
+  send: (message: string) => boolean;
   retry: () => void;
   /** Forgets the server-side conversation and clears the transcript, leaving a note that explains why. */
   startNewConversation: (note: string) => void;
@@ -57,7 +58,11 @@ export function useChat(params: ScenarioParams, onEventsChanged: () => void): Ch
           message,
           conversation_id: conversationIdRef.current,
         });
-        if (generation !== generationRef.current) return;
+        // A plan saved by a reply to an abandoned conversation still changed the forecast.
+        if (generation !== generationRef.current) {
+          if (response.events_changed) onEventsChanged();
+          return;
+        }
         conversationIdRef.current = response.conversation_id;
         append({
           role: "assistant",
@@ -82,9 +87,10 @@ export function useChat(params: ScenarioParams, onEventsChanged: () => void): Ch
   const send = useCallback(
     (message: string) => {
       const text = message.trim();
-      if (text === "" || sending) return;
+      if (text === "" || sending) return false;
       append({ role: "user", text });
       void deliver(text);
+      return true;
     },
     [sending, append, deliver],
   );

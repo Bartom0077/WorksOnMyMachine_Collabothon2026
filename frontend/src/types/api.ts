@@ -129,6 +129,8 @@ export interface DecisionSnapshot {
   min_balance_date_before: string;
   status_after: RiskStatus;
   min_balance_after_eur: number;
+  /** The credit line the chosen option relies on, if any. */
+  credit_limit_after_eur: number | null;
 }
 
 export interface Decision {

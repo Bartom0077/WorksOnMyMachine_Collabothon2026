@@ -1,8 +1,12 @@
 # Amalfi data MCP server (`mcp_server`)
 
 [MCP](https://modelcontextprotocol.io) server that gives the CFO agent (OGX on OpenShift AI) read access to
-KPI snapshots and bank data in the `amalfi` PostgreSQL database, plus one constrained write: saving a
+bank data and KPI snapshots in the `amalfi` PostgreSQL database, plus one constrained write: saving a
 planned event that the owner confirmed in the chat.
+
+The server never computes a balance or a forecast. The forecast, risk status and rescue options the owner
+sees are computed by the backend (`backend/forecast.py`, `risk.py`, `options.py`) and handed to the model
+in the prompt; that is the only source of truth for those numbers.
 
 ```
 app.py             FastMCP wiring: tool signatures/descriptions, X-As-Of-Date header, /health
@@ -17,20 +21,31 @@ In-cluster URL: `http://amalfi-mcp.autonomous-cfo.svc.cluster.local:8080/mcp`
 
 ## Tools
 
-| Tool | Purpose |
-|---|---|
-| `get_data_overview()` | analysis date, data ranges, transaction types + cash-flow class, snapshot dates |
-| `get_kpi_snapshot(date?, include_forecast?, include_kpi_details?)` | authoritative KPIs + status, signals, data quality (main input) |
-| `get_kpi_history(date_from, date_to?, kpi_names?, step_days?)` | KPI time series from daily snapshots |
-| `get_cashflow_summary(date_from, date_to?, group_by?, transaction_type?, counterparty?)` | inflow/outflow/net by day/week/month/type/counterparty/cash-flow class |
-| `get_transactions(date_from, date_to?, transaction_type?, counterparty?, direction?, min_abs_amount?, sort?, limit?)` | individual transactions (max 200) + totals of all matches |
-| `get_fixed_obligations(active_on?, category?)` | documented recurring payments |
-| `list_planned_events()` | saved planned events that are ongoing or upcoming on the analysis date |
-| `propose_planned_event(event_type, date_from, description, date_to?, amount_eur?)` | validates a plan from the chat, **writes nothing**; returns the proposal and a confirmation question |
-| `save_planned_event(event_type, date_from, description, original_utterance, date_to?, amount_eur?)` | **the only write**: validates and inserts one row into `planned_events` |
+| Tool | Purpose | Offered to the model by the product |
+|---|---|---|
+| `list_planned_events()` | saved planned events that end after the analysis date (still affect the forecast) | yes |
+| `propose_planned_event(event_type, date_from, description, date_to?, amount_eur?)` | validates a plan from the chat, **writes nothing**; returns the proposal and a confirmation question | yes |
+| `save_planned_event(event_type, date_from, description, original_utterance, date_to?, amount_eur?)` | **the only write**: validates and inserts one row into `planned_events` | yes |
+| `get_fixed_obligations(active_on?, category?)` | documented recurring payments | yes |
+| `get_data_overview()` | analysis date, data ranges, transaction types + cash-flow class, snapshot dates | no (analyst tool) |
+| `get_kpi_snapshot(date?, include_forecast?, include_kpi_details?)` | KPI engine snapshot: KPIs + status, signals, data quality | no (analyst tool) |
+| `get_kpi_history(date_from, date_to?, kpi_names?, step_days?)` | KPI time series from daily snapshots | no (analyst tool) |
+| `get_cashflow_summary(date_from, date_to?, group_by?, transaction_type?, counterparty?)` | inflow/outflow/net by day/week/month/type/counterparty/cash-flow class | no (analyst tool) |
+| `get_transactions(date_from, date_to?, transaction_type?, counterparty?, direction?, min_abs_amount?, sort?, limit?)` | individual transactions (max 200) + totals of all matches | no (analyst tool) |
 
-KPIs are never recomputed here (ROZWIAZANIE.md section 11): they come from `kpi_snapshots`. Transaction sums are in the
-original currency (CHF rows are not converted).
+### Which tools the product uses
+
+The backend passes an `allowed_tools` list with every chat call (`backend/llm_chat.py`): the three
+planned-event tools and `get_fixed_obligations`. The five analyst tools are deliberately withheld:
+
+* a KPI snapshot carries its own 30-day outlook that ignores planned events, so it contradicts the forecast
+  the backend computed and put into the prompt;
+* with the transaction tools the small model stated wrong facts (for example "no rent was paid" after
+  filtering by a transaction type that does not exist).
+
+They stay in the server for inspection with an MCP client (see "Run locally") and for a larger model. KPI
+values are only read from `kpi_snapshots` (written by `backend/kpi_engine`), never recomputed here.
+Transaction sums are in the original currency (CHF rows are not converted).
 
 ## Planned events (the write side)
 
@@ -46,7 +61,10 @@ because OGX reduces tool errors to `Error (code 1): None` in its `mcp_call` outp
 * `event_type` is `closure`, `expense` or `inflow` only (`payment_deferral` and `credit_line` are created
   by the backend from approved rescue options, never from the chat);
 * the `X-As-Of-Date` header is required: it is the simulated "today" and is stored as `as_of_date`;
-* `date_from` is today or later and at most 366 days ahead; `date_to` defaults to `date_from`;
+* the event must lie in the forecast, which starts **tomorrow** (today's bookings are already in the bank
+  balance): an `expense` / `inflow` is dated tomorrow or later, a `closure` starts today or later and ends
+  tomorrow or later. This is the rule the backend applies (`date_to` after the as-of date), so a saved plan
+  always changes the forecast. `date_from` is at most 366 days ahead; `date_to` defaults to `date_from`;
 * `closure`: no amount, at most 120 days; `expense` / `inflow`: `amount_eur` > 0 (max 10,000,000) and a
   single day;
 * `description` (max 200 characters) and, for saving, `original_utterance` (max 1000) are required.
@@ -71,7 +89,8 @@ Results:
 {"saved": false, "already_saved": true, "event": {...}, "note": "This event is already in the plans; nothing was added."}
 
 // rejected input (nothing written)
-{"valid": false, "error": "date_from 2025-04-01 is before today (2025-05-10). Planned events must be today or later; check the year and ask the owner if unsure."}
+{"valid": false, "error": "date_from 2025-04-01 is before today (2025-05-10). Planned events must be in the future; check the year and ask the owner if unsure."}
+{"valid": false, "error": "Today's (2025-05-10) payments are already in the bank balance and the forecast starts tomorrow. Put tomorrow or a later date in date_from; ask the owner if unsure."}
 {"saved": false, "error": "amount_eur is required for an expense (EUR, greater than 0). Ask the owner for the amount instead of guessing."}
 
 // list_planned_events
@@ -110,8 +129,12 @@ Read tools plus one constrained write tool:
     `planned_events`, `owner_decisions`;
   * `INSERT` on `planned_events`, limited to the columns of a chat event (not `id`, `category`,
     `decision_id`, `created_at`), and `USAGE` on its id sequence;
-  * nothing else: no `UPDATE` / `DELETE` anywhere, no access to `agent_proposals`. Transactions, KPIs and
-    owner decisions are read-only for this server.
+  * a row level security policy on `planned_events` lets the role insert only rows with `source = 'chat'`,
+    and the table constraint `planned_events_chat_scope` (`db/schema.sql`) limits chat rows to `closure`,
+    `expense` and `inflow`. The role therefore cannot create a `credit_line` or `payment_deferral`, even
+    with hand-written SQL;
+  * nothing else: no `UPDATE` / `DELETE` anywhere. Transactions, KPIs and owner decisions are read-only
+    for this server.
 * The role and every session default to `default_transaction_read_only=on` with a 10 s statement timeout.
   All read tools use that read-only connection. Only `save_planned_event` opens a separate connection with a
   single explicit `READ WRITE` transaction (`db.connect_write`), committed on success, rolled back on error.
@@ -125,16 +148,16 @@ Read tools plus one constrained write tool:
 
 ```bash
 oc port-forward -n autonomous-cfo svc/amalfi-db 15432:5432 &
-cd mcp_server && pip install -r requirements.txt
+cd mcp_server && pip install -r requirements-dev.txt   # requirements.txt + pytest
+python -m pytest -q                                    # unit tests (no database needed)
 PGHOST=localhost PGPORT=15432 PGDATABASE=amalfi PGUSER=amalfi_mcp PGPASSWORD=... MCP_PORT=18080 python app.py
 npx @modelcontextprotocol/inspector     # connect to http://localhost:18080/mcp (streamable HTTP)
-python -m pytest -q                     # unit tests
 ```
 
 ## Deploy (OpenShift)
 
 ```bash
-bash db/setup_mcp_user.sh                # DB role + grants + secret amalfi-mcp-db (idempotent)
+bash db/setup_mcp_user.sh                # DB role + grants + row level security + secret amalfi-mcp-db (idempotent)
 oc apply -f deploy/mcp-server.yaml       # ImageStream, BuildConfig, Deployment, Service
 ```
 

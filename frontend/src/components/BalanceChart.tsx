@@ -41,6 +41,7 @@ interface Props {
 
 interface TooltipCardProps {
   row: ChartRow;
+  baselineLabel: string;
   day: ForecastDay | undefined;
   optionId: string | null;
 }
@@ -49,7 +50,7 @@ function largestItems(day: ForecastDay) {
   return [...day.items].sort((a, b) => Math.abs(b.amount_eur) - Math.abs(a.amount_eur)).slice(0, MAX_TOOLTIP_ITEMS);
 }
 
-function TooltipCard({ row, day, optionId }: TooltipCardProps) {
+function TooltipCard({ row, baselineLabel, day, optionId }: TooltipCardProps) {
   const isForecast = row.history === undefined;
   return (
     <div className="chart-tooltip">
@@ -63,7 +64,7 @@ function TooltipCard({ row, day, optionId }: TooltipCardProps) {
         ) : null}
         {isForecast && row.baseline !== undefined ? (
           <div>
-            <dt>If you do nothing</dt>
+            <dt>{baselineLabel}</dt>
             <dd>{formatEur(row.baseline)}</dd>
           </div>
         ) : null}
@@ -99,11 +100,20 @@ function LegendItem({ color, dash, label }: { color: string; dash?: string; labe
   );
 }
 
+/**
+ * "If you do nothing" only makes sense while there is something to do: once no options are offered
+ * (nothing is wrong, or a measure was approved) the same line is simply the forecast.
+ */
+function needsAction(dashboard: Dashboard): boolean {
+  return dashboard.options.length > 0;
+}
+
 function describeChart(dashboard: Dashboard, previewOption: RescueOption | null): string {
   const { risk } = dashboard;
+  const forecastSubject = needsAction(dashboard) ? "If you do nothing, the forecast" : "The forecast";
   const parts = [
     `Balance today is ${formatEur(dashboard.current_balance_eur)}.`,
-    `If you do nothing, the forecast for the next ${dashboard.horizon_days} days reaches its lowest point of ` +
+    `${forecastSubject} for the next ${dashboard.horizon_days} days reaches its lowest point of ` +
       `${formatEur(risk.min_balance_eur)} on ${formatDate(risk.min_balance_date)}.`,
   ];
   if (previewOption !== null) {
@@ -138,7 +148,16 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
   const summary = describeChart(dashboard, previewOption);
   // A healthy forecast simply continues the history colour; red is reserved for a forecast that needs attention.
   const baselineColor = risk.status === "GREEN" ? COLORS.history : COLORS.baseline;
-  const baselineLabel = dashboard.options.length > 0 ? "Forecast if you do nothing" : "Forecast";
+  const baselineLabel = needsAction(dashboard) ? "If you do nothing" : "Forecast";
+  const baselineLegend = needsAction(dashboard) ? "Forecast if you do nothing" : "Forecast";
+  // With a credit line the buffer is measured from the limit, so the line sits below zero: say what it is.
+  const hasCreditLine = risk.credit_limit_eur !== null;
+  const bufferLabel = hasCreditLine
+    ? `Safety buffer (${formatEurWhole(dashboard.buffer_eur)} above the credit limit)`
+    : "Safety buffer";
+  // Labels sit above their line, away from the busiest part of the plot: without a credit line the buffer is
+  // near the history line (left), with one it is near the forecast's low point (right).
+  const bufferLabelPosition = hasCreditLine ? "insideBottomLeft" : "insideBottomRight";
 
   return (
     <section className="card" aria-labelledby="chart-title">
@@ -150,7 +169,7 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
 
       <ul className="legend" aria-label="Chart legend">
         <LegendItem color={COLORS.history} label="Past balance" />
-        <LegendItem color={baselineColor} dash={BASELINE_DASH} label={baselineLabel} />
+        <LegendItem color={baselineColor} dash={BASELINE_DASH} label={baselineLegend} />
         {previewOption !== null ? (
           <LegendItem
             color={COLORS.option}
@@ -212,7 +231,7 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                 stroke={COLORS.buffer}
                 strokeDasharray="3 3"
                
-                label={{ value: "Safety buffer", position: "insideBottomLeft", fill: COLORS.buffer, fontSize: 12 }}
+                label={{ value: bufferLabel, position: bufferLabelPosition, fill: COLORS.buffer, fontSize: 12 }}
               />
               {risk.credit_limit_eur !== null ? (
                 <ReferenceLine
@@ -220,7 +239,7 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                   stroke={COLORS.credit}
                   strokeDasharray="8 3 2 3"
                  
-                  label={{ value: "Credit limit", position: "insideTopLeft", fill: COLORS.credit, fontSize: 12 }}
+                  label={{ value: "Credit limit", position: "insideBottomLeft", fill: COLORS.credit, fontSize: 12 }}
                 />
               ) : null}
               {optionCreditLimit !== null ? (
@@ -231,7 +250,7 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                  
                   label={{
                     value: `Credit limit with option ${previewOption?.id ?? ""}`,
-                    position: "insideTopLeft",
+                    position: "insideBottomLeft",
                     fill: COLORS.credit,
                     fontSize: 12,
                   }}
@@ -250,7 +269,14 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                 content={({ active, label }) => {
                   const row = active && typeof label === "number" ? rowsByTime.get(label) : undefined;
                   if (row === undefined) return null;
-                  return <TooltipCard row={row} day={daysByDate.get(row.date)} optionId={previewOption?.id ?? null} />;
+                  return (
+                    <TooltipCard
+                      row={row}
+                      baselineLabel={baselineLabel}
+                      day={daysByDate.get(row.date)}
+                      optionId={previewOption?.id ?? null}
+                    />
+                  );
                 }}
               />
 
@@ -265,7 +291,7 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
               />
               <Line
                 dataKey="baseline"
-                name={baselineLabel}
+                name={baselineLegend}
                 stroke={baselineColor}
                 strokeWidth={2}
                 strokeDasharray={BASELINE_DASH}
@@ -324,6 +350,11 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
         </div>
         <figcaption className="chart__caption">{summary}</figcaption>
       </figure>
+      <p className="muted">
+        Day-to-day revenue and running costs are estimated from your average over the last{" "}
+        {dashboard.forecast.daily_averages.lookback_days} days ({dashboard.forecast.daily_averages.open_days} of them
+        open); fixed payments and your plans are added on their due dates.
+      </p>
 
       <details className="disclosure">
         <summary>Show the forecast as a table</summary>
@@ -334,7 +365,7 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
               <tr>
                 <th scope="col">Date</th>
                 <th scope="col" className="num">
-                  If you do nothing
+                  {baselineLabel}
                 </th>
                 {previewOption !== null ? (
                   <th scope="col" className="num">

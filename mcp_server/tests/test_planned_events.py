@@ -59,8 +59,18 @@ def test_expense_defaults_date_to_and_rounds_amount():
     assert "expense of EUR 8,000.00 on 2025-07-15" in pe.confirmation_prompt(event)
 
 
-def test_event_may_start_today():
-    assert pe.validate_event(TODAY, "inflow", "2025-05-10", None, 500, "Catering deposit").date_from == TODAY
+@pytest.mark.parametrize("event_type", ["expense", "inflow"])
+def test_payment_dated_today_is_rejected_because_the_forecast_starts_tomorrow(event_type):
+    with pytest.raises(ToolInputError, match="already in the bank balance"):
+        pe.validate_event(TODAY, event_type, "2025-05-10", None, 500, "Catering deposit")
+    assert pe.validate_event(TODAY, event_type, "2025-05-11", None, 500, "Catering deposit").date_from == date(2025, 5, 11)
+
+
+def test_closure_must_end_after_today():
+    with pytest.raises(ToolInputError, match="ends today"):
+        pe.validate_event(TODAY, "closure", "2025-05-10", "2025-05-10", None, "Closed today")
+    event = pe.validate_event(TODAY, "closure", "2025-05-10", "2025-05-11", None, "Closed for the weekend")
+    assert (event.date_from, event.date_to) == (TODAY, date(2025, 5, 11))
 
 
 @pytest.mark.parametrize("event_type", ["payment_deferral", "credit_line", "zamkniecie", "", "DROP TABLE"])
@@ -203,3 +213,12 @@ def test_as_of_header_is_required_outside_a_request():
 
     with pytest.raises(ToolInputError, match="X-As-Of-Date"):
         app._today(NoRequestContext())
+
+
+def test_list_returns_only_events_that_end_after_the_analysis_date():
+    """Same boundary as the backend forecast (date_to > as-of): an event that ended today is not listed."""
+    conn = RecordingConnection([(["id"], [(1,)])])
+    out = pe.list_planned_events(conn, TODAY)
+    statement, params = conn.executed[0]
+    assert "WHERE date_to > %s" in statement and params[0] == TODAY
+    assert out == {"analysis_date": "2025-05-10", "events": [{"id": 1}]}

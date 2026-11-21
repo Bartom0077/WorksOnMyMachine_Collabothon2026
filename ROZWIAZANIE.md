@@ -246,7 +246,9 @@ Zaliczka na podatek dochodowy była 10.03 → prognoza: 10.06.
 - `sredni_przychod_dzienny` = suma przychodów zmiennych / liczba dni **otwartych**
 (dni z przychodem > 0; wtedy zamknięcia nie psują średniej),
 - `srednie_zakupy_dzienne` = analogicznie dla kosztów zmiennych,
-- każdy przyszły dzień dostaje te dwie średnie.
+- każdy przyszły dzień dostaje te dwie średnie,
+- jeśli w oknie 28 dni jest mniej niż **14 dni otwartych** (np. tuż po długim zamknięciu), okno wydłuża się
+wstecz aż do 14. ostatniego dnia otwartego; API zwraca faktyczną długość okna (`lookback_days`).
 
 Uproszczenie: ignorujemy sezonowość. To podejście ostrożne (lato/jesień były lepsze).
 
@@ -304,9 +306,13 @@ Każdy typ = jedna mała funkcja, która modyfikuje dni prognozy **przed** licze
 Z czatu AI może tworzyć tylko typy `zamkniecie`, `wydatek`, `wplyw`. Typy `wstrzymanie` i `linia_kredytowa`
 powstają wyłącznie z zatwierdzonej opcji ratunku (Moduł 5).
 
+`wstrzymanie` jest zapisywane jako **jeden wiersz na każdą przesuniętą płatność**: `od` = pierwotny termin,
+`do` = nowy termin, z `kwota` i `kategoria`. Dzięki temu przesunięte zobowiązanie pozostaje w prognozie także
+wtedy, gdy „dziś" minie pierwotny termin. Usunięcie dowolnego wpisu agenta wycofuje całą zatwierdzoną opcję.
+
 ### 8.3. Zabezpieczenia zapisu przez MCP
 
-- Narzędzie zapisu przyjmuje tylko typy z listy powyżej (enum), daty `>= dziś` symulacji i kwotę > 0 (tam, gdzie wymagana).
+- Narzędzie zapisu przyjmuje tylko typy z listy powyżej (enum), daty po „dziś” symulacji (wydatek i wpływ: najwcześniej jutro; zamknięcie: koniec najwcześniej jutro – prognoza zaczyna się od jutra, a dzisiejsze operacje są już w saldzie) i kwotę > 0 (tam, gdzie wymagana).
 - Data „dziś" jest przekazywana do serwera MCP nagłówkiem `X-As-Of-Date` (tak jak dla narzędzi odczytu).
 - Użytkownik bazy dla serwera MCP dostaje prawo zapisu **tylko** do danych zdarzeń; transakcje, KPI i decyzje pozostają dla niego tylko do odczytu.
 - Potwierdzenie użytkownika jest wymagane przed zapisem (patrz otwarte kwestie, sekcja 20 – sposób wymuszenia).
@@ -522,10 +528,10 @@ Rekomendację zwróć jako JSON:
 
 1. **Model:** OpenShift AI → Model Serving → runtime **vLLM**, model `cfo-llm` (już wdrożony, `deploy/`).
 2. **OGX:** `deploy/ogx-base-config.yaml` + `deploy/ogx.yaml` – serwer OGX przed vLLM.
-3. **Serwer MCP:** `deploy/mcp-server.yaml` (obecnie tylko odczyt; do dodania narzędzie zapisu zdarzeń i uprawnienie zapisu do danych zdarzeń).
+3. **Serwer MCP:** `deploy/mcp-server.yaml` – narzędzia odczytu oraz jedno narzędzie zapisu (`save_planned_event`); rola bazy `amalfi_mcp` (`db/setup_mcp_user.sh`) może wyłącznie dopisywać zdarzenia z czatu.
 4. **Postgres:** już jest, dane załadowane.
 5. **Backend:** osobny pod, obraz Python (UBI, `deploy/backend.yaml`), Service; zmienne `PG`*, adres OGX, model, adres MCP.
-6. **Frontend:** osobny pod, obraz nginx z buildem React (`frontend/Dockerfile`, `deploy/openshift.yaml`), Route; nginx przekazuje `/api/`* do backendu.
+6. **Frontend:** osobny pod, obraz nginx z buildem React (`frontend/Dockerfile`, `deploy/frontend.yaml`), Route; nginx przekazuje `/api/`* do backendu. Backend nie ma własnego Route.
 7. **Bonusy:** vLLM ✅, OGX + MCP ✅, Jupyter Notebook do prototypowania prognozy, MLflow do logowania wywołań LLM (jeśli zostanie czas).
 
 ---
@@ -533,21 +539,40 @@ Rekomendację zwróć jako JSON:
 ## 17. Struktura repozytorium
 
 ```
-/frontend                React + Vite, obraz nginx
-  src/App.jsx            ekran główny, wykres, karty opcji, czat, plany, historia decyzji
+/frontend                React 18 + TypeScript + Vite, obraz nginx
+  src/App.tsx            ekran główny (składa komponenty)
+  src/api/               klient REST (/api)
+  src/components/        wykres, karty opcji, czat, plany, historia decyzji, dialogi
+  src/hooks/             stan czatu, przepływ decyzji, ładowanie danych
+  src/lib/               formatowanie kwot i dat, model wykresu
+  src/types/             typy kontraktu REST
+  e2e/                   testy Playwright: mocked (bez backendu) i live (wdrożona aplikacja)
   nginx-default-cfg/     proxy /api → backend
-/backend                 Python (FastAPI – do wprowadzenia zamiast http.server)
-  app.py                 REST API: dashboard, prognoza, opcje, decyzje, czat
+/backend                 Python (FastAPI)
+  app.py                 utworzenie aplikacji FastAPI
+  routes.py              REST: health, dashboard, zdarzenia, decyzje, reset demo
+  llm_routes.py          REST: rekomendacja i czat
+  schemas.py             modele Pydantic kontraktu REST
+  service.py             składanie dashboardu, teczki dla LLM i decyzji
+  domain.py              obiekty domenowe (bez I/O)
+  repository.py          dostęp do bazy (psycopg 3)
+  config.py, deps.py     konfiguracja i zależności FastAPI
+  errors.py              błędy i jednolite body błędu
+  texts.py               deterministyczne teksty (nagłówek, wnioski, rekomendacja awaryjna)
+  ledger.py              transakcje jako księga w EUR, saldo
   kpi_engine/            deterministyczny silnik KPI (istnieje)
   categories.py          kategoryzacja (Moduł 1)
   forecast.py            prognoza (Moduł 2)
   events.py              nakładanie zdarzeń (Moduł 3)
   risk.py                status ryzyka (Moduł 4)
   options.py             opcje A–E + symulacje (Moduł 5)
-  llm.py                 teczka JSON, prompt, wywołanie OGX, walidacja (Moduł 6)
+  llm.py                 klient OGX (Moduł 6)
+  llm_prompts.py         prompty i teczka JSON
+  llm_recommendation.py  rekomendacja: wywołanie modelu, walidacja, wersja awaryjna
+  llm_chat.py            czat: narzędzia MCP, zapis planów, komentarz po zmianie
 /mcp_server              narzędzia MCP (KPI i dane – odczyt; zdarzenia – zapis)
-/db                      schemat, import CSV, dane referencyjne (już wykonane)
-/deploy                  manifesty OpenShift (frontend, backend, MCP, OGX, Postgres)
+/db                      schemat, import CSV, dane referencyjne, rola bazy dla MCP
+/deploy                  manifesty OpenShift (frontend, backend, MCP, OGX, Postgres, CI poller)
 /Challenge               CSV z wyciągiem
 ```
 
@@ -567,7 +592,7 @@ Rekomendację zwróć jako JSON:
 
 ## 20. Otwarte kwestie (do ustalenia w zespole)
 
-1. **Horyzont prognozy** – ten dokument zakłada 60 dni, a istniejący silnik KPI liczy prognozę na 30 dni. Czy Moduł 2 ma rozszerzyć silnik KPI, czy być osobnym kodem? Odpowiedź: do MCP została dodana metoda umożliwiająca policzenie prognozy salda na 365 dni bez zapisywania tej wartości w historii. get_balance_forecast prognoza na N dni liczona na żądanie, niezapisywana, do horyzontów innych niż 7, 14 i 30 dni
+1. **Horyzont prognozy** – ten dokument zakłada 60 dni, a istniejący silnik KPI liczy prognozę na 30 dni. Czy Moduł 2 ma rozszerzyć silnik KPI, czy być osobnym kodem? Odpowiedź: Moduł 2 jest osobnym kodem w backendzie (`forecast.py`); prognoza na wybrany horyzont jest liczona na żądanie i nigdzie niezapisywana. Silnik KPI (30 dni) pozostaje bez zmian i zasila tylko narzędzia analityczne MCP, których aplikacja nie udostępnia modelowi.
 2. **Lista narzędzi MCP z KPI** – jest opisana w mcp_server
 3. **Wymuszenie potwierdzenia przed zapisem zdarzenia** – samą instrukcją w prompcie czy mechanizmem zatwierdzania wywołań narzędzi MCP w OGX (do sprawdzenia, czy wersja OGX na klastrze to wspiera). Odpowiedź: intrukcja w prompcie
 

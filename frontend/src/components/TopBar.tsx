@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { useDebouncedCallback } from "../hooks/useDebouncedCallback";
+import { formatDateRange } from "../lib/format";
 import type { Dashboard, HorizonDays, ScenarioParams } from "../types/api";
 import { Icon } from "./Icon";
 
 const HORIZONS: HorizonDays[] = [30, 60, 90];
-const BUFFER_DEBOUNCE_MS = 500;
+/** Typed values are committed once typing pauses, so intermediate keystrokes never reach the API. */
+const COMMIT_DEBOUNCE_MS = 500;
+/** Upper bound the API accepts for the safety buffer. */
+const MAX_BUFFER_EUR = 1_000_000;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+type DataRange = Dashboard["data_range"];
 
 interface Props {
   params: ScenarioParams;
-  dataRange: Dashboard["data_range"] | null;
+  dataRange: DataRange | null;
   onChange: (patch: Partial<ScenarioParams>) => void;
   onResetDemo: () => void;
 }
@@ -16,20 +23,36 @@ interface Props {
 function parseBuffer(text: string): number | null {
   if (text.trim() === "") return null;
   const value = Number(text);
-  return Number.isFinite(value) && value >= 0 ? value : null;
+  return Number.isFinite(value) && value >= 0 && value <= MAX_BUFFER_EUR ? value : null;
+}
+
+/** True for a complete date inside the bank data range (any complete date while the range is unknown). */
+function isSelectableDate(text: string, dataRange: DataRange | null): boolean {
+  if (!ISO_DATE.test(text)) return false;
+  // ISO dates order lexicographically.
+  return dataRange === null || (text >= dataRange.first_date && text <= dataRange.last_date);
 }
 
 /** Brand plus the three scenario controls: "today", forecast horizon and safety buffer. */
 export function TopBar({ params, dataRange, onChange, onResetDemo }: Props) {
+  // Both typed fields keep a local draft: only a complete, valid value is passed on.
+  const [dateText, setDateText] = useState(params.as_of_date);
   const [bufferText, setBufferText] = useState(String(params.buffer_eur));
+  // A date input reports "" while a date is only partly typed; that is not an error yet.
+  const dateInvalid = dateText !== "" && !isSelectableDate(dateText, dataRange);
   const bufferInvalid = parseBuffer(bufferText) === null;
 
+  useEffect(() => setDateText(params.as_of_date), [params.as_of_date]);
   useEffect(() => setBufferText(String(params.buffer_eur)), [params.buffer_eur]);
+
+  const commitDate = useDebouncedCallback((text: string) => {
+    if (isSelectableDate(text, dataRange) && text !== params.as_of_date) onChange({ as_of_date: text });
+  }, COMMIT_DEBOUNCE_MS);
 
   const commitBuffer = useDebouncedCallback((text: string) => {
     const value = parseBuffer(text);
     if (value !== null) onChange({ buffer_eur: value });
-  }, BUFFER_DEBOUNCE_MS);
+  }, COMMIT_DEBOUNCE_MS);
 
   return (
     <header className="topbar">
@@ -49,14 +72,26 @@ export function TopBar({ params, dataRange, onChange, onResetDemo }: Props) {
             <input
               type="date"
               className="field__input"
-              value={params.as_of_date}
+              value={dateText}
               min={dataRange?.first_date}
               max={dataRange?.last_date}
               required
+              aria-invalid={dateInvalid}
+              aria-describedby={dateInvalid ? "date-error" : undefined}
               onChange={(event) => {
-                if (event.target.value !== "") onChange({ as_of_date: event.target.value });
+                setDateText(event.target.value);
+                commitDate(event.target.value);
+              }}
+              onBlur={() => {
+                // An abandoned, half-typed date falls back to the date the forecast is showing.
+                if (dateText === "") setDateText(params.as_of_date);
               }}
             />
+            {dateInvalid && dataRange !== null ? (
+              <span id="date-error" className="field__error" role="alert">
+                Choose a date within {formatDateRange(dataRange.first_date, dataRange.last_date)}
+              </span>
+            ) : null}
           </label>
 
           <fieldset className="field">
@@ -87,6 +122,7 @@ export function TopBar({ params, dataRange, onChange, onResetDemo }: Props) {
               className="field__input field__input--number"
               inputMode="decimal"
               min={0}
+              max={MAX_BUFFER_EUR}
               step={500}
               value={bufferText}
               aria-invalid={bufferInvalid}
@@ -98,7 +134,7 @@ export function TopBar({ params, dataRange, onChange, onResetDemo }: Props) {
             />
             {bufferInvalid ? (
               <span id="buffer-error" className="field__error" role="alert">
-                Enter 0 or more
+                Enter 0 to 1,000,000
               </span>
             ) : null}
           </label>

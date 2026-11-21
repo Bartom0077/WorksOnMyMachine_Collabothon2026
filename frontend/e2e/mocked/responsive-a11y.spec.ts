@@ -51,9 +51,12 @@ test.describe("accessibility", () => {
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
 
-    // Keyboard focus inside a card previews that option on the chart.
+    // Moving focus through a card leaves the chart alone; the preview button is the explicit, keyboard-operable way.
+    const legend = page.getByRole("list", { name: "Chart legend" });
     await page.getByRole("article", { name: /Option A/ }).getByRole("button", { name: /Preview on chart/ }).focus();
-    await expect(page.getByRole("list", { name: "Chart legend" })).toContainText("Forecast with option A");
+    await expect(legend).toContainText("Forecast with option E");
+    await page.keyboard.press("Enter");
+    await expect(legend).toContainText("Forecast with option A");
   });
 });
 

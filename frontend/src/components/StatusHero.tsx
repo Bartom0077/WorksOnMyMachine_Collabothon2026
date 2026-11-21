@@ -7,8 +7,6 @@ const LAMPS: RiskStatus[] = ["RED", "YELLOW", "GREEN"];
 
 interface Props {
   dashboard: Dashboard;
-  /** LLM headline once available; the deterministic dashboard headline is used until then. */
-  headline: string;
 }
 
 function TrafficLight({ status }: { status: RiskStatus }) {
@@ -25,7 +23,7 @@ function TrafficLight({ status }: { status: RiskStatus }) {
 }
 
 /** Traffic light, headline and the handful of figures the owner needs first. */
-export function StatusHero({ dashboard, headline }: Props) {
+export function StatusHero({ dashboard }: Props) {
   const { risk } = dashboard;
   const tone = risk.status.toLowerCase();
 
@@ -40,7 +38,7 @@ export function StatusHero({ dashboard, headline }: Props) {
             {STATUS_LABELS[risk.status]}
           </p>
           <h2 id="hero-headline" className="hero__headline">
-            {headline}
+            {dashboard.headline}
           </h2>
         </div>
       </div>

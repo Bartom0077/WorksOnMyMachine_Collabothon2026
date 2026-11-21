@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from llm import (
+    Deadline,
     JsonSchemaFormat,
     LlmContextOverflowError,
     LlmHttpError,
@@ -134,6 +135,45 @@ def test_get_response_reads_a_stored_response():
         return httpx.Response(200, json=OGX_DOCUMENT)
 
     assert len(client_answering(handler).get_response("resp_0dc827c6").mcp_calls) == 3
+
+
+def test_get_response_cannot_be_steered_to_another_ogx_path():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.raw_path.decode())
+        return httpx.Response(404, json={"detail": "not found"})
+
+    for hostile in ("../models", "../../v1/models?x=1"):
+        with pytest.raises(LlmResponseNotFoundError):
+            client_answering(handler).get_response(hostile)
+    assert seen == ["/v1/responses/..%2Fmodels", "/v1/responses/..%2F..%2Fv1%2Fmodels%3Fx%3D1"]
+
+
+def test_a_call_can_override_the_read_timeout():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.extensions["timeout"])
+        return httpx.Response(200, json=OGX_DOCUMENT)
+
+    http = httpx.Client(base_url="http://ogx.test", transport=httpx.MockTransport(handler),
+                        timeout=httpx.Timeout(90.0, connect=5.0))
+    OgxClient(http, "m").respond(simple_request(), timeout_seconds=12.5)
+    assert (seen["read"], seen["connect"]) == (12.5, 5.0)
+    OgxClient(http, "m").respond(simple_request())
+    assert (seen["read"], seen["connect"]) == (90.0, 5.0)
+
+
+def test_deadline_hands_out_what_is_left_of_the_budget():
+    now = [100.0]
+    deadline = Deadline(150.0, clock=lambda: now[0])
+    assert deadline.timeout(90.0) == 90.0
+    now[0] += 100
+    assert deadline.remaining() == 50.0 and deadline.timeout(90.0) == 50.0
+    now[0] += 50
+    with pytest.raises(LlmTimeoutError):
+        deadline.timeout(90.0)
 
 
 def test_context_overflow_is_recognised():

@@ -10,7 +10,7 @@ import service
 from config import LLM_CONNECT_TIMEOUT_SECONDS, LLM_TIMEOUT_SECONDS, Settings
 from deps import get_repository, get_settings
 from llm import LlmClient, OgxClient, create_http_client
-from llm_chat import ChatService
+from llm_chat import ChatService, PendingPlansStore
 from llm_recommendation import RecommendationCache, RecommendationService
 from repository import Repository
 from schemas import ChatRequest, ChatResponse, ErrorResponse, RecommendationResponse, SimulationParams
@@ -33,6 +33,11 @@ def get_recommendation_cache() -> RecommendationCache:
     return RecommendationCache()
 
 
+@lru_cache(maxsize=1)
+def get_pending_plans_store() -> PendingPlansStore:
+    return PendingPlansStore()
+
+
 def get_recommendation_service(client: Annotated[LlmClient, Depends(get_llm_client)],
                                cache: Annotated[RecommendationCache, Depends(get_recommendation_cache)],
                                ) -> RecommendationService:
@@ -40,8 +45,9 @@ def get_recommendation_service(client: Annotated[LlmClient, Depends(get_llm_clie
 
 
 def get_chat_service(client: Annotated[LlmClient, Depends(get_llm_client)],
-                     settings: Annotated[Settings, Depends(get_settings)]) -> ChatService:
-    return ChatService(client, settings.mcp_server_url)
+                     settings: Annotated[Settings, Depends(get_settings)],
+                     pending: Annotated[PendingPlansStore, Depends(get_pending_plans_store)]) -> ChatService:
+    return ChatService(client, settings.mcp_server_url, pending)
 
 
 @router.post("/recommendation", response_model=RecommendationResponse, responses={422: {"model": ErrorResponse}})
@@ -57,6 +63,7 @@ def recommend(params: SimulationParams, repository: RepositoryDep,
              responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}})
 def chat(request: ChatRequest, repository: RepositoryDep,
          assistant: Annotated[ChatService, Depends(get_chat_service)]) -> ChatResponse:
-    """One turn with the scenario assistant; planned events are written by the MCP server, never by this code."""
+    """One turn with the scenario assistant. Planned events are written by the MCP server; this code only
+    removes a plan again when the model saved it without the owner's confirmation."""
     turn = assistant.handle(repository, request.to_query(), request.message, request.conversation_id)
     return ChatResponse.model_validate(turn)

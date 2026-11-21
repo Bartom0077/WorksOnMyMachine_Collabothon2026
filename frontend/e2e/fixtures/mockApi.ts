@@ -19,12 +19,14 @@ export interface MockError {
 /** Mutable backend state; tests change it to script what the next responses look like. */
 export interface MockState {
   dashboard: Dashboard | MockError;
+  dashboardDelayMs: number;
   recommendation: Recommendation | MockError;
   recommendationDelayMs: number;
   events: PlannedEvent[];
   decisions: Decision[];
   /** Responses for successive POST /chat calls; an empty queue answers 503 assistant_unavailable. */
   chatQueue: (ChatResponse | MockError)[];
+  chatDelayMs: number;
   /** Called for POST /decisions; returns the stored decision or an error and may mutate the state. */
   onDecision: (request: DecisionRequest, state: MockState) => Decision | MockError;
   /** Called after a successful chat response is chosen; lets a test change what later requests return. */
@@ -61,6 +63,10 @@ function fulfill(route: Route, value: object, successStatus = 200): Promise<void
     : route.fulfill({ status: successStatus, json: value });
 }
 
+function delay(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
 function defaultRecommendation(state: MockState): Recommendation | MockError {
   if (isMockError(state.recommendation) || isMockError(state.dashboard)) return state.recommendation;
   return state.dashboard.options.length === 0 ? greenRecommendation : state.recommendation;
@@ -70,11 +76,13 @@ function defaultRecommendation(state: MockState): Recommendation | MockError {
 export async function mockApi(page: Page, overrides: Partial<MockState> = {}): Promise<MockApi> {
   const state: MockState = {
     dashboard: redDashboard,
+    dashboardDelayMs: 0,
     recommendation: llmRecommendation,
     recommendationDelayMs: 0,
     events: isMockError(overrides.dashboard ?? redDashboard) ? [] : [...redDashboard.events],
     decisions: [],
     chatQueue: [],
+    chatDelayMs: 0,
     onDecision: () => apiError(409, "option_not_available", "This option is no longer available."),
     afterChat: () => undefined,
     ...overrides,
@@ -97,6 +105,7 @@ export async function mockApi(page: Page, overrides: Partial<MockState> = {}): P
     switch (endpoint) {
       case "GET /dashboard":
         requests.dashboard.push(url.searchParams);
+        await delay(state.dashboardDelayMs);
         return fulfill(route, state.dashboard);
       case "GET /events":
         return fulfill(route, { events: state.events });
@@ -104,9 +113,7 @@ export async function mockApi(page: Page, overrides: Partial<MockState> = {}): P
         return fulfill(route, { decisions: state.decisions });
       case "POST /recommendation":
         requests.recommendation += 1;
-        if (state.recommendationDelayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, state.recommendationDelayMs));
-        }
+        await delay(state.recommendationDelayMs);
         return fulfill(route, defaultRecommendation(state));
       case "POST /decisions": {
         const body: DecisionRequest = request.postDataJSON();
@@ -121,6 +128,7 @@ export async function mockApi(page: Page, overrides: Partial<MockState> = {}): P
         requests.chat.push(body);
         const response =
           state.chatQueue.shift() ?? apiError(503, "assistant_unavailable", "The assistant is not reachable.");
+        await delay(state.chatDelayMs);
         if (!isMockError(response)) state.afterChat(response, state);
         return fulfill(route, response);
       }
@@ -134,7 +142,11 @@ export async function mockApi(page: Page, overrides: Partial<MockState> = {}): P
         if (eventId !== undefined) {
           const id = Number(eventId);
           requests.deletedEventIds.push(id);
-          state.events = state.events.filter((event) => event.id !== id);
+          // Like the backend: deleting a measure of an approved option withdraws all measures of that decision.
+          const decisionId = state.events.find((event) => event.id === id)?.decision_id ?? null;
+          state.events = state.events.filter(
+            (event) => event.id !== id && (decisionId === null || event.decision_id !== decisionId),
+          );
           return route.fulfill({ status: 204 });
         }
         return fulfill(route, apiError(404, "not_found", `No mock for ${endpoint}`));

@@ -1,5 +1,8 @@
-"""Amalfi data MCP server — read tools for KPI snapshots and bank data, plus one constrained write
+"""Amalfi data MCP server — read tools for bank data and KPI snapshots, plus one constrained write
 (a planned event confirmed by the owner in the chat) for the CFO agent.
+
+The product's chat offers the model only the planned-event tools and get_fixed_obligations; balances, the
+forecast and rescue options come from the backend (see README.md, "Which tools the product uses").
 
 Run:  python app.py            (streamable HTTP on 0.0.0.0:8080, MCP endpoint /mcp, health /health)
 Env:  DATABASE_URL or PG* vars; AMALFI_AS_OF_DATE (optional server-wide cutoff); MCP_HOST / MCP_PORT.
@@ -29,12 +32,16 @@ INSTRUCTIONS = """\
 Financial data of Pizzeria Amalfi (single EUR business bank account, year 2025).
 All data is limited to the analysis date (no data after it is visible). Everything is read-only except
 planned events.
-* KPI numbers (cash balance, forecasts, buffer, liquidity gap, surplus, net cash flow, trends, fixed cost
-  coverage) are computed by a deterministic engine: read them with get_kpi_snapshot / get_kpi_history and
-  quote them as they are. Do not recompute KPIs from transactions.
-* Use get_cashflow_summary, get_transactions and get_fixed_obligations to explain causes and spot risks.
+* The current balance, the balance forecast, the risk status and the rescue options are computed by the
+  application backend and given to you in the conversation (the SITUATION). That is the only source for
+  those numbers: never derive them from the tools below.
 * Planned events (closure, expense, inflow) the owner mentions: call propose_planned_event first, ask the
-  owner to confirm, and only after an explicit yes call save_planned_event.
+  owner to confirm, and only after an explicit yes call save_planned_event. list_planned_events shows what
+  is already saved.
+* get_fixed_obligations lists the documented recurring payments.
+* Analyst tools (get_data_overview, get_kpi_snapshot, get_kpi_history, get_cashflow_summary,
+  get_transactions) describe the past. The KPI snapshot carries its own 30-day outlook that ignores planned
+  events; it does not replace the backend forecast.
 * Dates are YYYY-MM-DD. Amounts are EUR unless a row's currency says otherwise.
 """
 
@@ -91,8 +98,11 @@ OptDateStr = Annotated[Optional[str], Field(description="Date in YYYY-MM-DD form
 ChatEventType = Annotated[Literal["closure", "expense", "inflow"], Field(
     description="closure = restaurant closed (no revenue, no variable costs); expense = one-off payment; "
                 "inflow = one-off money in.")]
-EventStart = Annotated[str, Field(description="YYYY-MM-DD, today or later: first closure day, or the payment day.")]
-EventEnd = Annotated[Optional[str], Field(description="Last closure day (YYYY-MM-DD). Omit for expense/inflow.")]
+EventStart = Annotated[str, Field(
+    description="YYYY-MM-DD. Payment day of an expense/inflow: tomorrow or later (today's payments are already "
+                "in the bank balance). First day of a closure: today or later.")]
+EventEnd = Annotated[Optional[str], Field(
+    description="Last closure day (YYYY-MM-DD), tomorrow or later. Omit for expense/inflow.")]
 EventAmount = Annotated[Optional[float], Field(
     description="Positive EUR amount; required for expense/inflow, omit for closure.")]
 EventDescription = Annotated[str, Field(description="Short label, e.g. 'Summer holiday closure' or 'New oven'.")]
@@ -100,8 +110,8 @@ EventDescription = Annotated[str, Field(description="Short label, e.g. 'Summer h
 
 @mcp.tool()
 def get_data_overview(ctx: Context) -> dict:
-    """Overview of the available data: analysis date, transaction date range and count, transaction types
-    with their cash-flow class, and which KPI snapshot dates exist. Call this first if unsure what exists."""
+    """Analyst tool. Overview of the available data: analysis date, transaction date range and count,
+    transaction types with their cash-flow class, and which KPI snapshot dates exist."""
     return _run(ctx, tools.get_data_overview)
 
 
@@ -114,10 +124,11 @@ def get_kpi_snapshot(
                                                         "and scheduled fixed payments.")] = False,
     include_kpi_details: Annotated[bool, Field(description="Add per-KPI calculation details.")] = False,
 ) -> dict:
-    """Authoritative KPI snapshot for a date: current cash balance, 7/14/30-day forecast balances, minimum
-    cash buffer, 30-day liquidity gap, deployable surplus, net cash flow, inflow/outflow trend, fixed cost
-    coverage — each with status (HEALTHY/WARNING/CRITICAL), plus scenario signals (liquidity shortage /
-    excess liquidity) and data quality flags. This is the main input for any assessment."""
+    """Analyst tool. KPI snapshot of the deterministic KPI engine for a date: current cash balance,
+    7/14/30-day outlook, minimum cash buffer, 30-day liquidity gap, deployable surplus, net cash flow,
+    inflow/outflow trend, fixed cost coverage — each with status (HEALTHY/WARNING/CRITICAL), plus scenario
+    signals and data quality flags. Its outlook ignores planned events, so it is not the forecast the owner
+    sees: that one comes from the application backend."""
     return _run(ctx, tools.get_kpi_snapshot, date_=date, include_forecast=include_forecast,
                 include_kpi_details=include_kpi_details)
 
@@ -133,8 +144,8 @@ def get_kpi_history(
     step_days: Annotated[int, Field(description="Return every N-th day (7 = weekly). Long ranges are "
                                                 "sampled automatically.", ge=1, le=31)] = 1,
 ) -> dict:
-    """Time series of KPI values from daily snapshots between two dates (inclusive), with overall status
-    and scenario hint per day. Use it to see trends, e.g. how the cash balance or coverage ratio evolved."""
+    """Analyst tool. Time series of KPI values from daily snapshots between two dates (inclusive), with
+    overall status and scenario hint per day. Use it to see trends, e.g. how the cash balance evolved."""
     return _run(ctx, tools.get_kpi_history, date_from=date_from, date_to=date_to, kpi_names=kpi_names,
                 step_days=step_days)
 
@@ -151,7 +162,7 @@ def get_cashflow_summary(
     counterparty: Annotated[Optional[str], Field(description="Filter: text contained in payer/beneficiary "
                                                              "or payment reference.")] = None,
 ) -> dict:
-    """Inflow, outflow, net and transaction count of the bank account, grouped by period, transaction type,
+    """Analyst tool. Inflow, outflow, net and transaction count of the bank account, grouped by period, type,
     counterparty or cash-flow class (OPERATING_INFLOW, FIXED_OUTFLOW, VARIABLE_OUTFLOW, OTHER_*). Use it to
     find what drives revenue and costs and how they change over time."""
     return _run(ctx, tools.get_cashflow_summary, date_from=date_from, date_to=date_to, group_by=group_by,
@@ -173,7 +184,7 @@ def get_transactions(
                     Field(description="amount_desc = largest absolute amounts first.")] = "date_desc",
     limit: Annotated[int, Field(description="Max rows returned.", ge=1, le=200)] = 50,
 ) -> dict:
-    """Individual bank transactions matching the filters, plus totals of all matching rows per currency.
+    """Analyst tool. Individual bank transactions matching the filters, plus totals of all matches per currency.
     Use it to explain a specific movement (large payment, missing revenue, unusual counterparty)."""
     return _run(ctx, tools.get_transactions, date_from=date_from, date_to=date_to,
                 transaction_type=transaction_type, counterparty=counterparty, direction=direction,
@@ -199,7 +210,7 @@ def get_fixed_obligations(
 @mcp.tool()
 def list_planned_events(ctx: Context) -> dict:
     """Planned events already saved for the forecast (closures, one-off expenses and inflows, approved
-    rescue actions) that are ongoing or upcoming on the analysis date."""
+    rescue actions) that end after the analysis date, i.e. still affect the forecast."""
     return _run(ctx, planned_events.list_planned_events)
 
 

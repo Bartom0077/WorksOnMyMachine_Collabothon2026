@@ -13,10 +13,12 @@ class FakeLlmClient:
     def __init__(self, *script: Union[LlmResponse, LlmError]):
         self._script = list(script)
         self.requests: list[LlmRequest] = []
+        self.timeouts: list[Optional[float]] = []
         self.stored: dict[str, LlmResponse] = {}
 
-    def respond(self, request: LlmRequest) -> LlmResponse:
+    def respond(self, request: LlmRequest, timeout_seconds: Optional[float] = None) -> LlmResponse:
         self.requests.append(request)
+        self.timeouts.append(timeout_seconds)
         if not self._script:
             raise AssertionError("The fake LLM client was called more often than scripted.")
         step = self._script.pop(0)
@@ -25,7 +27,7 @@ class FakeLlmClient:
         self.stored[step.id] = step
         return step
 
-    def get_response(self, response_id: str) -> LlmResponse:
+    def get_response(self, response_id: str, timeout_seconds: Optional[float] = None) -> LlmResponse:
         if response_id not in self.stored:
             raise LlmResponseNotFoundError(f"unknown response {response_id}")
         return self.stored[response_id]

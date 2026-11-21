@@ -6,7 +6,8 @@ from decimal import Decimal
 import pytest
 
 import service
-from domain import DashboardQuery, DecisionStatus, EventType, ForecastDay, RiskStatus, Scenario
+from domain import DashboardQuery, DecisionStatus, EventType, EventUpdate, ForecastDay, RiskStatus, Scenario
+from errors import OptionNotAvailableError
 from fakes import closure, expense
 from options import apply_changes, financing_cost, recommend, required_credit_limit, unarranged_overdraft_cost
 
@@ -52,10 +53,11 @@ def test_option_a_credit_line_is_rounded_up_to_5000_and_restores_green(closure_d
 
 def test_option_b_postpones_both_zurich_transfers(closure_dashboard):
     option = _by_id(closure_dashboard)["B"]
-    [event] = option.events_to_add
-    window = closure_dashboard.risk.risk_window
-    assert (event.event_type, event.category) == (EventType.PAYMENT_DEFERRAL, "investment_outflow")
-    assert (event.date_from, event.date_to) == (window.start, window.end)
+    assert [(event.event_type, event.category, event.date_from, event.date_to, event.amount_eur)
+            for event in option.events_to_add] == [
+        (EventType.PAYMENT_DEFERRAL, "investment_outflow", date(2025, 5, 15), date(2025, 7, 15), Decimal("4333.34")),
+        (EventType.PAYMENT_DEFERRAL, "investment_outflow", date(2025, 6, 15), date(2025, 8, 15), Decimal("4333.34")),
+    ]
     assert len(option.simulated_actions) == 2 and "15 May postponed to 15 July" in option.simulated_actions[0]
     improvement = option.new_min_balance_eur - closure_dashboard.risk.min_balance_eur
     assert improvement == Decimal("8666.68")  # two transfers of 4,333.34 EUR
@@ -76,7 +78,9 @@ def test_option_c_shortens_the_closure_to_seven_days(closure_dashboard):
 def test_option_e_combines_deferral_with_a_smaller_credit_line(closure_dashboard):
     options = _by_id(closure_dashboard)
     option = options["E"]
-    assert [event.event_type for event in option.events_to_add] == [EventType.PAYMENT_DEFERRAL, EventType.CREDIT_LINE]
+    assert [event.event_type for event in option.events_to_add] == [
+        EventType.PAYMENT_DEFERRAL, EventType.PAYMENT_DEFERRAL, EventType.CREDIT_LINE]
+    assert option.title == "Postpone payments + smaller credit line"
     assert option.credit_limit_eur == Decimal("15000") < options["A"].credit_limit_eur
     assert option.new_status is RiskStatus.GREEN
     assert option.new_min_balance_eur == options["B"].new_min_balance_eur
@@ -149,3 +153,87 @@ def test_required_credit_limit_rounds_up(closure_dashboard):
     assert required_credit_limit(baseline, Decimal("3000")) == Decimal("20000")
     exact = Scenario(closure_dashboard.forecast, replace(closure_dashboard.risk, min_balance_eur=Decimal("-7000")))
     assert required_credit_limit(exact, Decimal("3000")) == Decimal("10000")   # exactly 10,000: no extra step
+
+
+def test_postponed_payments_stay_owed_when_today_moves_on(repo):
+    """Finding: the postponed payment used to vanish once today passed the original due date."""
+    wide = DashboardQuery(AS_OF, 90, Decimal("3000"))
+    service.record_decision(repo, wide, "B", DecisionStatus.APPROVED, None)
+
+    def postponed(as_of):
+        dashboard = service.build_dashboard(repo, DashboardQuery(as_of, 90, Decimal("3000")))
+        return [(day.date, item.amount_eur) for day in dashboard.forecast.days for item in day.items
+                if "postponed" in item.label]
+
+    both = [(date(2025, 7, 15), Decimal("-4333.34")), (date(2025, 8, 15), Decimal("-4333.34"))]
+    assert postponed(AS_OF) == both[:1]                    # 15 August is beyond the 90-day horizon
+    assert postponed(date(2025, 5, 20)) == both            # past the first original due date
+    assert postponed(date(2025, 7, 2)) == both             # past both original due dates
+    assert postponed(date(2025, 7, 16)) == both[1:]        # the first postponed payment is due and gone
+
+
+def test_option_b_discloses_money_postponed_beyond_the_horizon(closure_dashboard, repo):
+    option = _by_id(closure_dashboard)["B"]
+    assert "€8,667 of it falls due after the end of this forecast (15 July, 15 August)" in option.description
+    wide = _by_id(service.build_dashboard(repo, DashboardQuery(AS_OF, 90, Decimal("3000"))))["B"]
+    assert "€4,333 of it falls due after the end of this forecast (15 August)" in wide.description
+
+
+def test_option_d_is_not_offered_when_the_expense_would_leave_the_horizon(repo):
+    repo.add_event(expense(date(2025, 7, 9), "8000"))       # the last forecast day is also the low point
+    dashboard = service.build_dashboard(repo, QUERY)
+    assert dashboard.risk.min_balance_date == date(2025, 7, 9)
+    assert "D" not in _by_id(dashboard)
+
+
+def test_option_c_reopens_a_running_closure_earlier(repo):
+    running = repo.add_event(closure(date(2025, 5, 8), date(2025, 6, 5)))
+    option = _by_id(service.build_dashboard(repo, QUERY))["C"]
+    assert option.event_updates == (EventUpdate(running.id, date(2025, 5, 8), date(2025, 5, 14)),)
+    assert option.description == "Cut the current closure short: reopen on 15 May instead of 6 June."
+    assert option.non_financial_cost == "22 days less holiday"
+    # more than seven days in: the earliest possible reopening is tomorrow
+    later = _by_id(service.build_dashboard(repo, DashboardQuery(date(2025, 5, 20), 60, Decimal("3000"))))["C"]
+    assert later.event_updates == (EventUpdate(running.id, date(2025, 5, 8), date(2025, 5, 20)),)
+
+
+def test_rejection_sticks_to_the_proposal_not_to_the_letter(repo):
+    """Finding: a rejected E used to mark every later option E as rejected, whatever it contained."""
+    plan = repo.add_event(closure(date(2025, 6, 1), date(2025, 6, 21)))
+    service.record_decision(repo, QUERY, "E", DecisionStatus.REJECTED, None)
+    assert _by_id(service.build_dashboard(repo, QUERY))["E"].rejected
+    repo.delete_event(plan.id)
+    other_situation = service.build_dashboard(repo, DashboardQuery(AS_OF, 60, Decimal("0")))
+    assert "E" in _by_id(other_situation) and not _by_id(other_situation)["E"].rejected
+
+
+def test_rejecting_twice_is_refused_and_approving_lifts_the_rejection(repo):
+    service.record_decision(repo, QUERY, "A", DecisionStatus.REJECTED, None)
+    with pytest.raises(OptionNotAvailableError):
+        service.record_decision(repo, QUERY, "A", DecisionStatus.REJECTED, None)
+    assert len(repo.decisions) == 1
+    approved = service.record_decision(repo, QUERY, "A", DecisionStatus.APPROVED, None)
+    service.delete_event(repo, repo.events[0].id)            # withdraw it again: the same proposal is back
+    assert not _by_id(service.build_dashboard(repo, QUERY))["A"].rejected
+    assert repo.decisions[-1].id == approved.id
+
+
+def test_removing_one_event_of_an_approved_option_withdraws_the_whole_option(repo):
+    plan = repo.add_event(closure(date(2025, 6, 1), date(2025, 6, 21)))
+    decision = service.record_decision(repo, QUERY, "E", DecisionStatus.APPROVED, None)
+    credit_line = next(event for event in repo.events if event.event_type is EventType.CREDIT_LINE)
+    service.delete_event(repo, credit_line.id)
+    assert [event.id for event in repo.events] == [plan.id]  # the postponed payments went with the credit line
+    [record] = repo.list_decisions()
+    assert record.id == decision.id and record.execution_messages[-1] == service.DECISION_WITHDRAWN_NOTE
+    assert service.build_dashboard(repo, QUERY).risk.min_balance_eur == Decimal("-15728.42")
+
+
+def test_option_texts_make_no_false_claims(repo):
+    no_buffer = _by_id(service.build_dashboard(repo, DashboardQuery(AS_OF, 60, Decimal("0"))))
+    assert "buffer" not in no_buffer["A"].description
+    assert no_buffer["E"].credit_limit_eur == no_buffer["A"].credit_limit_eur
+    assert no_buffer["E"].title == "Postpone payments + credit line" and "smaller" not in no_buffer["E"].description
+    assert "less than €1" in no_buffer["B"].cost_note and "about €0" not in no_buffer["A"].cost_note
+    big_buffer = _by_id(service.build_dashboard(repo, DashboardQuery(AS_OF, 60, Decimal("20000"))))
+    assert big_buffer["E"].cost_eur == 0 and big_buffer["E"].cost_note.startswith("A stand-by line")

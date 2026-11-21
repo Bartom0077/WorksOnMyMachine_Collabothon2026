@@ -11,10 +11,10 @@ import type {
 } from "../../src/types/api";
 
 const DAY_MS = 86_400_000;
-export const AS_OF_DATE = "2025-05-10";
-export const CURRENT_BALANCE = 3205.69;
-export const MIN_BALANCE = -22097.6;
-export const MIN_DATE = "2025-07-03";
+const AS_OF_DATE = "2025-05-10";
+const CURRENT_BALANCE = 3205.69;
+const MIN_BALANCE = -22097.6;
+const MIN_DATE = "2025-07-03";
 
 type Anchor = [date: string, balance: number];
 
@@ -129,7 +129,7 @@ export const closureEvent: PlannedEvent = {
   created_at: "2025-05-10T09:15:00Z",
 };
 
-export const ovenEvent: PlannedEvent = {
+const ovenEvent: PlannedEvent = {
   id: 12,
   event_type: "expense",
   date_from: "2025-06-10",
@@ -144,15 +144,15 @@ export const ovenEvent: PlannedEvent = {
   created_at: "2025-05-10T09:20:00Z",
 };
 
-export const agentEvents: PlannedEvent[] = [
+const agentEvents: PlannedEvent[] = [
   {
     id: 21,
     event_type: "payment_deferral",
     date_from: "2025-05-15",
-    date_to: "2025-07-03",
-    amount_eur: null,
+    date_to: "2025-07-15",
+    amount_eur: 5000,
     category: "investment_outflow",
-    description: "Transfers to Zurich postponed by two months",
+    description: "Transfer to Zurich (Luigi): payment of 15 May postponed to 15 July",
     original_utterance: null,
     source: "agent",
     as_of_date: AS_OF_DATE,
@@ -175,7 +175,7 @@ export const agentEvents: PlannedEvent[] = [
   },
 ];
 
-export const options: RescueOption[] = [
+const options: RescueOption[] = [
   {
     id: "A",
     title: "Credit line",
@@ -331,7 +331,7 @@ export const approvedDashboard: Dashboard = {
 export const llmRecommendation: Recommendation = {
   source: "llm",
   fallback_reason: null,
-  headline: "In about 8 weeks you will be roughly €22,000 short on your account.",
+  headline: redDashboard.headline,
   explanation:
     "For three weeks in June there is no revenue, while salaries, rent and the transfers to Luigi still have to be paid.",
   recommended_option_id: "E",
@@ -345,7 +345,7 @@ export const llmRecommendation: Recommendation = {
 export const greenRecommendation: Recommendation = {
   source: "llm",
   fallback_reason: null,
-  headline: "You are on track for the next 60 days.",
+  headline: greenDashboard.headline,
   explanation: "Revenue comfortably covers your fixed costs and no unusual payments are planned.",
   recommended_option_id: null,
   rationale: "",
@@ -385,6 +385,7 @@ export const approvedDecision: Decision = {
     min_balance_date_before: MIN_DATE,
     status_after: "GREEN",
     min_balance_after_eur: -10097.6,
+    credit_limit_after_eur: 15000,
   },
 };
 
@@ -396,7 +397,7 @@ export const rejectedDecision: Decision = {
   option_description: "Hold the two €6,000 transfers due in the risk window and pay them two months later.",
   status: "rejected",
   execution_messages: [],
-  snapshot: { ...approvedDecision.snapshot, status_after: "RED" },
+  snapshot: { ...approvedDecision.snapshot, status_after: "RED", credit_limit_after_eur: null },
 };
 
 export const chatProposal: ChatResponse = {

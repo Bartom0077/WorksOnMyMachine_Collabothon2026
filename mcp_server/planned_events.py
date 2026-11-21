@@ -26,6 +26,13 @@ MAX_UTTERANCE_CHARS = 1000
 MAX_LISTED_EVENTS = 50
 CHAT_SOURCE = "chat"
 
+# The forecast starts on the day after today (today's bookings are already in the bank balance), so an event
+# that is over by the end of today would be saved without changing any number.
+CLOSURE_ENDS_TODAY = ("A closure that ends today ({today}) changes nothing: the forecast starts tomorrow. "
+                      "Set date_to to tomorrow or later.")
+PAYMENT_DATED_TODAY = ("Today's ({today}) payments are already in the bank balance and the forecast starts "
+                       "tomorrow. Put tomorrow or a later date in date_from; ask the owner if unsure.")
+
 EVENT_COLUMNS = ("id, event_type, date_from, date_to, amount_eur, category, description, original_utterance, "
                  "source, as_of_date, decision_id, created_at")
 
@@ -83,12 +90,15 @@ def _dates(event_type: EventType, date_from: Optional[str], date_to: Optional[st
     today = as_of.isoformat()
     if d_from < as_of:
         raise ToolInputError(f"date_from {d_from.isoformat()} is before today ({today}). Planned events must be "
-                             f"today or later; check the year and ask the owner if unsure.")
+                             f"in the future; check the year and ask the owner if unsure.")
     if d_to < d_from:
         raise ToolInputError(f"date_to {d_to.isoformat()} is before date_from {d_from.isoformat()}.")
     if (d_from - as_of).days > MAX_DAYS_AHEAD:
         raise ToolInputError(f"date_from {d_from.isoformat()} is more than {MAX_DAYS_AHEAD} days after today "
                              f"({today}). Check the year.")
+    if d_to <= as_of:
+        message = CLOSURE_ENDS_TODAY if event_type is EventType.CLOSURE else PAYMENT_DATED_TODAY
+        raise ToolInputError(message.format(today=today))
     length = (d_to - d_from).days + 1
     if event_type is EventType.CLOSURE:
         if length > MAX_CLOSURE_DAYS:
@@ -191,10 +201,11 @@ def save_planned_event(conn: psycopg.Connection, as_of: date, event_type: str, d
 
 
 def list_planned_events(conn: psycopg.Connection, cutoff: Optional[date]) -> dict:
-    """Planned events that are ongoing or upcoming on the analysis date (all events when there is no cutoff)."""
+    """Planned events that still affect the forecast on the analysis date: they end after it, the same rule the
+    backend forecast applies (all events when there is no cutoff)."""
     rows = fetch_dicts(conn, """
         SELECT id, event_type, date_from, date_to, amount_eur, category, description, source
-        FROM planned_events WHERE date_to >= %s
+        FROM planned_events WHERE date_to > %s
         ORDER BY date_from, id LIMIT %s""", (cutoff or date.min, MAX_LISTED_EVENTS + 1))
     out = {"analysis_date": cutoff.isoformat() if cutoff else None, "events": rows[:MAX_LISTED_EVENTS]}
     if len(rows) > MAX_LISTED_EVENTS:

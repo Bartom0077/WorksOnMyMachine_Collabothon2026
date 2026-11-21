@@ -10,7 +10,6 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Callable, Iterator, Sequence
 
-from config import DEFERRAL_MONTHS
 from domain import EventDraft, EventType, ForecastItem, ItemKind
 
 _VARIABLE_KINDS = (ItemKind.VARIABLE_REVENUE, ItemKind.VARIABLE_COST)
@@ -67,17 +66,22 @@ def apply_inflow(plan: Plan, event: EventDraft) -> None:
     _add_one_off(plan, event, _required_amount(event))
 
 
+def deferred_dues(events: Sequence[EventDraft]) -> frozenset[tuple[str, date]]:
+    """(category, original due date) of every postponed payment; the recurring projection leaves these out."""
+    return frozenset((event.category, event.date_from) for event in events
+                     if event.event_type is EventType.PAYMENT_DEFERRAL and event.category is not None)
+
+
 def apply_payment_deferral(plan: Plan, event: EventDraft) -> None:
-    """Move the recurring payments of ``category`` in the window two months later (postponed, not cancelled)."""
-    for day in list(_days_in_range(plan, event)):
-        deferred = [item for item in day.items if item.kind is ItemKind.FIXED and item.category == event.category]
-        day.items = [item for item in day.items if item not in deferred]
-        new_day = plan.get(add_months(day.date, DEFERRAL_MONTHS))
-        if new_day is None:
-            continue  # the postponed payment falls outside the forecast horizon
-        for item in deferred:
-            label = f"{item.label} (postponed from {day.date.isoformat()})"
-            new_day.items.append(ForecastItem(label, item.category, ItemKind.EVENT, item.amount_eur))
+    """A postponed payment is still owed: it is paid on the new due date (``date_to``).
+
+    The original instalment is left out by the recurring projection (see ``deferred_dues``), so the obligation
+    holds on its stored dates no matter how far "today" has moved.
+    """
+    new_day = plan.get(event.date_to)
+    if new_day is not None:
+        new_day.items.append(ForecastItem(event.description, event.category or event.event_type.value,
+                                          ItemKind.EVENT, -_required_amount(event)))
 
 
 def apply_credit_line(plan: Plan, event: EventDraft) -> None:
