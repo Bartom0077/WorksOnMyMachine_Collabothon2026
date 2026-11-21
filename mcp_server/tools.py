@@ -2,18 +2,30 @@
 
 Rules (SPEC.md §5.1, KPI_SPEC.md):
 * KPIs come only from ``kpi_snapshots`` (deterministic engine); nothing here recomputes them.
+  The one exception is ``get_balance_forecast``: it runs the engine's own forecast (``kpi_engine``) for an
+  arbitrary horizon on request and returns it without persisting anything.
 * Every read is capped at the as-of ``cutoff`` so the agent never sees future data.
 * Only whitelisted tables/columns, parameterised SQL, bounded result sizes.
 """
 from __future__ import annotations
 
+import sys
 from datetime import date
+from pathlib import Path
 from typing import List, Optional
 
 import psycopg
 from psycopg import sql
 
-from db import ToolInputError, fetch_dicts, parse_date
+from db import ToolInputError, fetch_dicts, parse_date, to_jsonable
+
+try:  # container: PYTHONPATH points at backend/ (mcp_server/Dockerfile)
+    from kpi_engine import KpiEngineError, run_forecast
+    from kpi_engine.engine import MAX_FORECAST_DAYS
+except ImportError:  # local checkout: mcp_server/ next to backend/
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+    from kpi_engine import KpiEngineError, run_forecast
+    from kpi_engine.engine import MAX_FORECAST_DAYS
 
 MAX_RANGE_DAYS = 400
 MAX_TRANSACTIONS = 200
@@ -307,3 +319,33 @@ def get_fixed_obligations(conn: psycopg.Connection, cutoff: Optional[date], acti
     if day:
         notes.insert(0, f"Obligations started on or before {day.isoformat()}.")
     return {**_meta(cutoff, notes), "obligations": rows}
+
+
+def get_balance_forecast(conn: psycopg.Connection, cutoff: Optional[date], days: int, date_: Optional[str] = None,
+                         include_daily: bool = False) -> dict:
+    """Balance forecast ``days`` ahead, computed now by the KPI engine and NOT stored in ``kpi_snapshots``."""
+    if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= MAX_FORECAST_DAYS:
+        raise ToolInputError(f"days must be an integer between 1 and {MAX_FORECAST_DAYS}.")
+    requested = parse_date(date_, "date")
+    as_of = _cap(requested, cutoff)
+    notes = []
+    if requested and cutoff and requested > cutoff:
+        notes.append(f"Requested {requested.isoformat()} is after the analysis date; forecasting from "
+                     f"{cutoff.isoformat()}.")
+    if as_of is None:
+        last = fetch_dicts(conn, "SELECT max(booking_date) AS d FROM bank_transactions")[0]["d"]
+        if last is None:
+            raise ToolInputError("No bank transactions available to forecast from.")
+        as_of = date.fromisoformat(last)
+        notes.append(f"No date or analysis date given; forecasting from the last booking date {last}.")
+    try:
+        f = run_forecast(as_of, days, connection=conn)
+    except KpiEngineError as exc:
+        raise ToolInputError(str(exc)) from exc
+    if not include_daily:
+        f.pop("daily", None)
+        notes.append("Day-by-day path omitted; call again with include_daily=true to get it.")
+    notes.append("Computed on request with the KPI engine's forecast model (data booked on/before the forecast "
+                 "date only); not persisted. For 7/14/30 days it equals the forecast_balance_* KPIs of the snapshot.")
+    f.pop("engine", None)
+    return {**_meta(cutoff, notes), "persisted": False, **to_jsonable(f)}

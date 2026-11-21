@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Optional, Sequence
@@ -46,6 +47,8 @@ LABELS = {
     "fixed_cost_coverage_ratio": (8, "fixed_cost_coverage", "Pokrycie kosztów stałych", "Fixed cost coverage ratio", "ratio"),
 }
 ESTIMATE_GROUPS = {2, 3, 4, 5, 8}
+FORECAST_METHOD = "B_d = B_{d-1} + daily operating inflow - daily variable outflow - scheduled obligations due on d"
+MAX_FORECAST_DAYS = 365
 
 
 class Flags:
@@ -73,19 +76,44 @@ def _reference_rates(obligations: Sequence[FixedObligation]) -> Dict[str, Decima
     return rates
 
 
-def compute_metrics(
+@dataclass
+class _Inputs:
+    """Everything derived from the raw inputs before the forecast path is built (steps 1-7)."""
+    flags: Flags
+    history: List[Transaction]
+    flows: List[K.Flow]
+    first_tx: Optional[date]
+    last_tx: Optional[date]
+    missing_fx: list
+    fx: FxConverter
+    fx_counts: Counter
+    balance: Decimal
+    balance_source: dict
+    base_rr: K.RunRates
+    alt_rr: K.RunRates
+    has_schedule: bool
+    sched: ScheduleResult
+    scheduled_by_day: Dict[date, Decimal]
+    fixed_monthly: Decimal
+    scheduled_next: Optional[Decimal]
+    buffer: Decimal
+
+    def daily_outflow(self, rr: K.RunRates) -> Decimal:
+        """Without a schedule, fixed-type outflows are projected as a daily average (KPI_SPEC.md §0.6)."""
+        return rr.daily_variable_outflow + (Decimal("0") if self.has_schedule else rr.daily_fixed_outflow_hist)
+
+
+def _prepare(
     as_of: date,
     transactions: Sequence[Transaction],
     obligations: Optional[Sequence[FixedObligation]],
     anchors: Sequence[BalanceAnchor],
-    config: EngineConfig = EngineConfig(),
-    computed_at: Optional[datetime] = None,
-    account_number: Optional[str] = None,
-) -> dict:
-    cfg = config
+    cfg: EngineConfig,
+    schedule_days: int,
+) -> _Inputs:
+    """Leakage guard, FX, classification, B0, run-rates, obligation schedule and buffer."""
     flags = Flags()
     obligations = list(obligations or [])
-    horizon = cfg.forecast_horizon_days
 
     # ---- 1. Leakage guard: never use anything booked after as_of.
     future = [t for t in transactions if t.booking_date > as_of]
@@ -185,7 +213,7 @@ def compute_metrics(
     # ---- 6. Scheduled obligations.
     has_schedule = bool(obligations)
     if has_schedule:
-        sched = project_schedule(obligations, history, as_of, horizon, fx)
+        sched = project_schedule(obligations, history, as_of, schedule_days, fx)
         if sched.extrapolated_ids:
             flags.add("OBLIGATION_EXTRAPOLATED", INFO,
                       "Obligations projected beyond their documented validity (valid_to) on the assumption they continue: "
@@ -204,9 +232,6 @@ def compute_metrics(
                   "(totals preserved, payment timing lost).",
                   ["forecast_balance_30d_eur", "minimum_cash_buffer_eur", "fixed_cost_coverage_ratio"])
 
-    def daily_outflow(rr: K.RunRates) -> Decimal:
-        return rr.daily_variable_outflow + (Decimal("0") if has_schedule else rr.daily_fixed_outflow_hist)
-
     scheduled_by_day: Dict[date, Decimal] = {}
     for p in sched.payments:
         if p.amount_eur is not None:
@@ -222,6 +247,63 @@ def compute_metrics(
         fixed_monthly = cents(-K.sum_flows(flows, s, e, {FIXED_OUTFLOW}))
         scheduled_next = None
     buffer = K.minimum_cash_buffer(fixed_monthly, alt_rr.daily_variable_outflow, cfg.buffer_variable_reserve_days)
+
+    return _Inputs(flags=flags, history=history, flows=flows, first_tx=first_tx, last_tx=last_tx,
+                   missing_fx=missing_fx, fx=fx, fx_counts=fx_counts, balance=balance,
+                   balance_source=balance_source, base_rr=base_rr, alt_rr=alt_rr, has_schedule=has_schedule,
+                   sched=sched, scheduled_by_day=scheduled_by_day, fixed_monthly=fixed_monthly,
+                   scheduled_next=scheduled_next, buffer=buffer)
+
+
+def _horizon_json(hs: K.HorizonStats) -> dict:
+    return {
+        "horizon_days": hs.horizon,
+        "end_balance_eur": money_json(hs.end_balance),
+        "min_balance_eur": money_json(hs.min_balance),
+        "min_balance_date": _d(hs.min_date),
+        "liquidity_gap_eur": money_json(hs.gap),
+        "projected_overdraft_eur": money_json(hs.overdraft),
+        "first_date_below_buffer": _d(hs.first_breach_date),
+        "first_date_below_zero": _d(hs.first_overdraft_date),
+    }
+
+
+def _daily_json(path: Sequence[K.ForecastDay], buffer: Decimal) -> List[dict]:
+    return [
+        {"day": p.day, "date": _d(p.on), "inflow_eur": money_json(p.inflow),
+         "variable_outflow_eur": money_json(p.variable_outflow), "scheduled_outflow_eur": money_json(p.scheduled_outflow),
+         "balance_eur": money_json(p.balance), "below_buffer": p.balance < buffer, "below_zero": p.balance < 0}
+        for p in path
+    ]
+
+
+def _scheduled_json(payments) -> List[dict]:
+    return [
+        {"date": _d(p.payment_date), "expense_id": p.expense_id, "payee": p.payee, "category": p.category,
+         "amount": money_json(p.amount), "currency": p.currency, "amount_eur": money_json(p.amount_eur),
+         "fx_source": p.fx_source, "extrapolated": p.extrapolated}
+        for p in payments
+    ]
+
+
+def compute_metrics(
+    as_of: date,
+    transactions: Sequence[Transaction],
+    obligations: Optional[Sequence[FixedObligation]],
+    anchors: Sequence[BalanceAnchor],
+    config: EngineConfig = EngineConfig(),
+    computed_at: Optional[datetime] = None,
+    account_number: Optional[str] = None,
+) -> dict:
+    cfg = config
+    obligations = list(obligations or [])
+    horizon = cfg.forecast_horizon_days
+    p = _prepare(as_of, transactions, obligations, anchors, cfg, horizon)
+    flags, history, flows, first_tx, last_tx = p.flags, p.history, p.flows, p.first_tx, p.last_tx
+    missing_fx, fx, fx_counts, balance, balance_source = p.missing_fx, p.fx, p.fx_counts, p.balance, p.balance_source
+    base_rr, alt_rr, has_schedule, sched = p.base_rr, p.alt_rr, p.has_schedule, p.sched
+    scheduled_by_day, fixed_monthly, scheduled_next, buffer = p.scheduled_by_day, p.fixed_monthly, p.scheduled_next, p.buffer
+    daily_outflow = p.daily_outflow
 
     # ---- 8. KPI 2/4/5: forecast.
     path = K.build_forecast(balance, as_of, horizon, base_rr.daily_inflow, daily_outflow(base_rr), scheduled_by_day)
@@ -291,17 +373,7 @@ def compute_metrics(
         "fixed_cost_coverage_ratio": K.status_coverage(coverage, cfg),
     }
 
-    def horizon_json(hs: K.HorizonStats) -> dict:
-        return {
-            "horizon_days": hs.horizon,
-            "end_balance_eur": money_json(hs.end_balance),
-            "min_balance_eur": money_json(hs.min_balance),
-            "min_balance_date": _d(hs.min_date),
-            "liquidity_gap_eur": money_json(hs.gap),
-            "projected_overdraft_eur": money_json(hs.overdraft),
-            "first_date_below_buffer": _d(hs.first_breach_date),
-            "first_date_below_zero": _d(hs.first_overdraft_date),
-        }
+    horizon_json = _horizon_json
 
     breach = s30.first_breach_date
     values = {
@@ -426,23 +498,13 @@ def compute_metrics(
     }
 
     forecast = {
-        "method": "B_d = B_{d-1} + daily operating inflow - daily variable outflow - scheduled obligations due on d",
+        "method": FORECAST_METHOD,
         "horizon_days": horizon,
         "run_rates": {"base": base_rr.to_json(), "sensitivity": alt_rr.to_json()},
-        "scheduled_obligations": [
-            {"date": _d(p.payment_date), "expense_id": p.expense_id, "payee": p.payee, "category": p.category,
-             "amount": money_json(p.amount), "currency": p.currency, "amount_eur": money_json(p.amount_eur),
-             "fx_source": p.fx_source, "extrapolated": p.extrapolated}
-            for p in sched.payments
-        ],
+        "scheduled_obligations": _scheduled_json(sched.payments),
         "open_commitments": sched.open_commitments,
         "completed_commitments": sched.completed_commitments,
-        "daily": [
-            {"day": p.day, "date": _d(p.on), "inflow_eur": money_json(p.inflow),
-             "variable_outflow_eur": money_json(p.variable_outflow), "scheduled_outflow_eur": money_json(p.scheduled_outflow),
-             "balance_eur": money_json(p.balance), "below_buffer": p.balance < buffer, "below_zero": p.balance < 0}
-            for p in path
-        ],
+        "daily": _daily_json(path, buffer),
         "sensitivity": {
             "description": f"Same model with {cfg.alt_run_rate_lookback_days}-day run-rates",
             "horizons": [horizon_json(alt_stats[h]) for h in cfg.forecast_horizons],
@@ -485,5 +547,68 @@ def compute_metrics(
             "version": ENGINE_VERSION,
             "computed_at": (computed_at or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "parameters": cfg.to_json(),
+        },
+    }
+
+
+def forecast_balance(
+    as_of: date,
+    days: int,
+    transactions: Sequence[Transaction],
+    obligations: Optional[Sequence[FixedObligation]],
+    anchors: Sequence[BalanceAnchor],
+    config: EngineConfig = EngineConfig(),
+    computed_at: Optional[datetime] = None,
+    account_number: Optional[str] = None,
+) -> dict:
+    """Forecast end-of-day balance ``days`` ahead of ``as_of`` (KPI 2 method, arbitrary horizon).
+
+    Same inputs, leakage guard and model as ``compute_metrics`` — for ``days`` = 7/14/30 the results
+    equal the stored ``forecast_balance_*`` KPIs. Pure function: never touches the database or the clock.
+    """
+    if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= MAX_FORECAST_DAYS:
+        raise ValueError(f"days must be an integer between 1 and {MAX_FORECAST_DAYS}, got {days!r}")
+    cfg = config
+    # The schedule always covers the buffer window too, so MCB is identical to the KPI snapshot.
+    p = _prepare(as_of, transactions, list(obligations or []), anchors, cfg,
+                 max(days, cfg.buffer_fixed_horizon_days))
+    if days > cfg.alt_run_rate_lookback_days:
+        p.flags.add("LONG_FORECAST_HORIZON", INFO,
+                    f"{days}-day horizon is longer than the {cfg.alt_run_rate_lookback_days}-day run-rate history; "
+                    "flat run-rates are extrapolated (no seasonality), treat the far end as indicative.")
+
+    path = K.build_forecast(p.balance, as_of, days, p.base_rr.daily_inflow, p.daily_outflow(p.base_rr), p.scheduled_by_day)
+    hs = K.horizon_stats(path, days, p.buffer)
+    alt_path = K.build_forecast(p.balance, as_of, days, p.alt_rr.daily_inflow, p.daily_outflow(p.alt_rr), p.scheduled_by_day)
+    target = as_of + timedelta(days=days)
+    in_horizon = [x for x in p.sched.payments if x.payment_date <= target]
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "as_of_date": as_of.isoformat(),
+        "target_date": target.isoformat(),
+        "horizon_days": days,
+        "currency": REPORTING_CURRENCY,
+        "account_number": account_number,
+        "opening_balance_eur": money_json(p.balance),
+        "forecast_balance_eur": money_json(hs.end_balance),
+        "status": K.status_forecast(hs.min_balance, p.buffer),
+        "minimum_cash_buffer_eur": money_json(p.buffer),
+        "summary": _horizon_json(hs),
+        "method": FORECAST_METHOD,
+        "run_rates": {"base": p.base_rr.to_json(), "sensitivity": p.alt_rr.to_json()},
+        "scheduled_obligations": _scheduled_json(in_horizon),
+        "scheduled_obligations_total_eur": money_json(cents(sum(
+            (x.amount_eur for x in in_horizon if x.amount_eur is not None), Decimal("0")))),
+        "daily": _daily_json(path, p.buffer),
+        "sensitivity": {
+            "description": f"Same model with {cfg.alt_run_rate_lookback_days}-day run-rates",
+            **_horizon_json(K.horizon_stats(alt_path, days, p.buffer)),
+        },
+        "data_quality": {"status": p.flags.status(), "flags": p.flags.items},
+        "engine": {
+            "name": ENGINE_NAME,
+            "version": ENGINE_VERSION,
+            "computed_at": (computed_at or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     }

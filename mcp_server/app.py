@@ -27,6 +27,8 @@ All data is limited to the analysis date (no data after it is visible).
 * KPI numbers (cash balance, forecasts, buffer, liquidity gap, surplus, net cash flow, trends, fixed cost
   coverage) are computed by a deterministic engine: read them with get_kpi_snapshot / get_kpi_history and
   quote them as they are. Do not recompute KPIs from transactions.
+* For a balance forecast over another horizon (e.g. 45 or 90 days) call get_balance_forecast; it runs the same
+  engine on request and is not stored.
 * Use get_cashflow_summary, get_transactions and get_fixed_obligations to explain causes and spot risks.
 * Dates are YYYY-MM-DD. Amounts are EUR unless a row's currency says otherwise.
 """
@@ -85,6 +87,22 @@ def get_kpi_snapshot(
     excess liquidity) and data quality flags. This is the main input for any assessment."""
     return _run(ctx, tools.get_kpi_snapshot, date_=date, include_forecast=include_forecast,
                 include_kpi_details=include_kpi_details)
+
+
+@mcp.tool()
+def get_balance_forecast(
+    ctx: Context,
+    days: Annotated[int, Field(description="How many days ahead to forecast (1-365).", ge=1, le=365)],
+    date: Annotated[Optional[str], Field(description="Forecast start date YYYY-MM-DD (balance at its end of day); "
+                                                     "default = the analysis date. Capped at the analysis date.")] = None,
+    include_daily: Annotated[bool, Field(description="Add the day-by-day balance path (days + 1 points).")] = False,
+) -> dict:
+    """Forecast end-of-day cash balance N days ahead, computed now by the deterministic KPI engine from data
+    booked on or before the start date (same model as the 7/14/30-day KPIs; result is not stored). Returns
+    forecast and opening balance, lowest balance and its date, minimum cash buffer, liquidity gap, projected
+    overdraft, first dates below buffer / zero, status, run-rates, scheduled fixed payments in the horizon,
+    a 90-day-run-rate sensitivity and data quality flags. Use it for horizons other than 7/14/30 days."""
+    return _run(ctx, tools.get_balance_forecast, days=days, date_=date, include_daily=include_daily)
 
 
 @mcp.tool()

@@ -144,6 +144,7 @@ run-rate (§0.6); `MCB` minimum cash buffer.
 | **Limitations** | Does not model seasonality beyond the 28-day window, planned closures or price changes. Card payouts are lumpy (twice weekly) but modelled as daily averages. |
 | **Status** | `min₃₀ < 0` → CRITICAL · `min₃₀ < MCB` → WARNING · else HEALTHY |
 | **Estimate?** | Yes |
+| **Arbitrary horizon** | `kpi_engine.forecast_balance(as_of, days, …)` (pure) / `run_forecast(as_of_date, days)` (reads the DB, writes nothing) / CLI `--forecast-days N`: the same model for any `days ∈ 1…365`, returning end balance, min balance and date, gap/overdraft vs. MCB, `daily[]` (`days + 1` points), scheduled items in the horizon and the 90-day sensitivity. For `days ∈ {7,14,30}` it equals the snapshot KPIs. MCB always uses the 30-day obligation window. Horizons > 90 days get the `LONG_FORECAST_HORIZON` INFO flag. Not stored in `kpi_snapshots`. |
 
 ### KPI 3 — Minimum Cash Buffer
 

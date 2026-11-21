@@ -71,3 +71,52 @@ def test_classification_matches_kpi_engine():
     sys.modules[spec.name] = module  # dataclasses need the module registered
     spec.loader.exec_module(module)
     assert tools.TRANSACTION_TYPE_CLASSES == module.TRANSACTION_TYPE_CLASSES
+
+
+# --------------------------------------------------------------------------- get_balance_forecast
+
+@pytest.fixture
+def fake_forecast(monkeypatch):
+    calls = []
+
+    def fake(as_of, days, connection=None):
+        calls.append((as_of, days, connection))
+        return {"as_of_date": as_of.isoformat(), "horizon_days": days, "forecast_balance_eur": 1.0,
+                "daily": [{"day": 0}], "engine": {"computed_at": "x"}}
+
+    monkeypatch.setattr(tools, "run_forecast", fake)
+    return calls
+
+
+def test_forecast_defaults_to_cutoff_and_is_not_persisted(fake_forecast):
+    out = tools.get_balance_forecast("conn", date(2025, 6, 30), 45)
+    assert fake_forecast == [(date(2025, 6, 30), 45, "conn")]
+    assert out["persisted"] is False and out["as_of_date"] == "2025-06-30"
+    assert "daily" not in out and "engine" not in out
+
+
+def test_forecast_start_date_is_capped_at_cutoff(fake_forecast):
+    out = tools.get_balance_forecast("conn", date(2025, 6, 30), 10, date_="2025-09-01", include_daily=True)
+    assert fake_forecast[0][0] == date(2025, 6, 30)
+    assert out["daily"] == [{"day": 0}]
+    assert any("after the analysis date" in n for n in out["notes"])
+
+
+def test_forecast_earlier_date_is_allowed(fake_forecast):
+    tools.get_balance_forecast("conn", date(2025, 6, 30), 10, date_="2025-03-31")
+    assert fake_forecast[0][0] == date(2025, 3, 31)
+
+
+@pytest.mark.parametrize("days", [0, 366, -1, True, "30"])
+def test_forecast_days_validated(fake_forecast, days):
+    with pytest.raises(ToolInputError, match="days"):
+        tools.get_balance_forecast("conn", date(2025, 6, 30), days)
+    assert fake_forecast == []
+
+
+def test_forecast_engine_errors_become_tool_errors(monkeypatch):
+    def boom(*a, **k):
+        raise tools.KpiEngineError("bank_transactions is empty")
+    monkeypatch.setattr(tools, "run_forecast", boom)
+    with pytest.raises(ToolInputError, match="empty"):
+        tools.get_balance_forecast("conn", date(2025, 6, 30), 5)

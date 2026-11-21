@@ -27,13 +27,12 @@ spec:
     git:
       uri: https://github.com/Bartom0077/WorksOnMyMachine_Collabothon2026.git
       ref: main
-    contextDir: mcp_server
+    # Repo root: the image also needs backend/kpi_engine (get_balance_forecast).
+    contextDir: .
   strategy:
-    type: Source
-    sourceStrategy:
-      from:
-        kind: DockerImage
-        name: registry.access.redhat.com/ubi9/python-312:latest
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: mcp_server/Dockerfile
   triggers: []
 ---
 apiVersion: apps/v1

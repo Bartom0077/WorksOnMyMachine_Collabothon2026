@@ -9,6 +9,7 @@ Python::
 CLI::
 
     python -m kpi_engine.runner --as-of-date 2025-06-30 [--to-date 2025-12-31] [--dry-run] [--print]
+    python -m kpi_engine.runner --as-of-date 2025-06-30 --forecast-days 45 [--print]   # read-only
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional, Union
 
 from .config import EngineConfig
-from .engine import compute_metrics
+from .engine import MAX_FORECAST_DAYS, compute_metrics, forecast_balance
 from . import repository as repo
 
 log = logging.getLogger("kpi_engine")
@@ -90,6 +91,40 @@ def run_kpi_engine(
             conn.close()
 
 
+def run_forecast(
+    as_of_date: Union[str, date],
+    days: int,
+    *,
+    dsn: Optional[str] = None,
+    connection=None,
+    account_number: Optional[str] = None,
+    config: EngineConfig = EngineConfig(),
+) -> dict:
+    """Forecast the balance ``days`` ahead of ``as_of_date`` from data booked on/before it. Read-only:
+    nothing is written to ``kpi_snapshots``. See ``engine.forecast_balance`` for the result shape."""
+    as_of = parse_date(as_of_date)
+    try:
+        days = int(days)
+    except (TypeError, ValueError) as exc:
+        raise KpiEngineError(f"Invalid days {days!r}; expected an integer") from exc
+    if not 1 <= days <= MAX_FORECAST_DAYS:
+        raise KpiEngineError(f"days must be between 1 and {MAX_FORECAST_DAYS}, got {days}")
+    own_conn = connection is None
+    conn = repo.connect(dsn) if own_conn else connection
+    try:
+        account = repo.resolve_account(conn, account_number)
+        transactions = repo.load_transactions(conn, as_of, account)
+        obligations = repo.load_obligations(conn)
+        anchors = repo.load_anchors(conn, as_of, account)
+        return forecast_balance(as_of, days, transactions, obligations, anchors, config, account_number=account)
+    except repo.RepositoryError as exc:
+        raise KpiEngineError(str(exc)) from exc
+    finally:
+        if own_conn:
+            conn.rollback()
+            conn.close()
+
+
 def run_kpi_engine_range(start: Union[str, date], end: Union[str, date], **kwargs) -> List[dict]:
     """Backfill one snapshot per day in [start, end] (e.g. for dashboard history)."""
     first, last = parse_date(start), parse_date(end)
@@ -118,10 +153,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--to-date", help="Optional last date for a daily backfill")
     parser.add_argument("--dsn", help="PostgreSQL DSN (default: DATABASE_URL / PG* env vars)")
     parser.add_argument("--account", help="Account number (default: the single account in the DB)")
+    parser.add_argument("--forecast-days", type=int,
+                        help=f"Only forecast the balance N days ahead (1-{MAX_FORECAST_DAYS}); read-only")
     parser.add_argument("--dry-run", action="store_true", help="Compute only, do not write kpi_snapshots")
     parser.add_argument("--print", dest="print_json", action="store_true", help="Print the metrics JSON")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+
+    if args.forecast_days is not None:
+        try:
+            f = run_forecast(args.as_of_date, args.forecast_days, dsn=args.dsn, account_number=args.account)
+        except KpiEngineError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        s = f["summary"]
+        print(json.dumps(f, indent=2, ensure_ascii=False) if args.print_json else
+              f"{f['as_of_date']} -> {f['target_date']} ({f['horizon_days']}d)  status={f['status']}  "
+              f"dq={f['data_quality']['status']}\n  balance={f['opening_balance_eur']}  forecast={f['forecast_balance_eur']}  "
+              f"min={s['min_balance_eur']} ({s['min_balance_date']})  buffer={f['minimum_cash_buffer_eur']}  "
+              f"gap={s['liquidity_gap_eur']}")
+        return 0
 
     kwargs = dict(dsn=args.dsn, persist=not args.dry_run, account_number=args.account)
     try:

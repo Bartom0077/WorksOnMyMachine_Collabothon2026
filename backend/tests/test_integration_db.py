@@ -144,3 +144,17 @@ def test_missing_reference_tables_degrade_gracefully(schema):
                 assert r["snapshot_id"] is not None
         finally:
             admin.execute(f"DROP SCHEMA {bare} CASCADE")
+
+
+def test_run_forecast_reads_db_and_writes_nothing(conn):
+    from kpi_engine import run_forecast
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM kpi_snapshots")
+        before = cur.fetchone()[0]
+    f = run_forecast("2025-06-30", 45, connection=conn)
+    expected = compute_metrics(date(2025, 6, 30), load_statement(), load_obligations(), ANCHORS, computed_at=FIXED_TIME)
+    assert f["daily"][:31] == expected["forecast"]["daily"]
+    assert len(f["daily"]) == 46 and f["target_date"] == "2025-08-14"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM kpi_snapshots")
+        assert cur.fetchone()[0] == before

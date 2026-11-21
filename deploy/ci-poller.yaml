@@ -43,6 +43,7 @@ data:
   frontend-sha: none
   backend-sha: none
   mcp-sha: none
+  mcp-engine-sha: none
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -115,6 +116,7 @@ data:
     build_if_changed frontend-sha frontend autonomous-cfo || fail=1
     build_if_changed backend-sha backend autonomous-cfo-backend || fail=1
     build_if_changed mcp-sha mcp_server amalfi-mcp || fail=1
+    build_if_changed mcp-engine-sha backend/kpi_engine amalfi-mcp || fail=1  # image bundles the engine
     exit "$fail"
 ---
 apiVersion: batch/v1
