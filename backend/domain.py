@@ -55,7 +55,11 @@ class LedgerEntry:
 
 @dataclass(frozen=True, kw_only=True)
 class EventDraft:
-    """The part of a planned event that influences the forecast."""
+    """The part of a planned event that influences the forecast.
+
+    A ``payment_deferral`` is one concrete obligation: the payment of ``category`` due on ``date_from`` is
+    paid on ``date_to`` instead (``amount_eur``).
+    """
 
     event_type: EventType
     date_from: date
@@ -92,6 +96,7 @@ class ForecastItem:
     category: str
     kind: ItemKind
     amount_eur: Decimal  # signed: + inflow, − outflow
+    due_date: Optional[date] = None  # fixed payments: the regular due date (an overdue one is shown later)
 
 
 @dataclass(frozen=True)
@@ -170,6 +175,7 @@ class RescueOption:
     scenario: Scenario
     pain_rank: int
     rejected: bool
+    fingerprint: str  # identifies the concrete changes of this proposal (see options.option_fingerprint)
     requires_approval: bool = True
 
     @property
@@ -249,6 +255,8 @@ class DecisionSnapshot:
     min_balance_date_before: date
     status_after: RiskStatus
     min_balance_after_eur: Decimal
+    credit_limit_after_eur: Optional[Decimal]  # the credit line the option relies on; None without one
+    cost_eur: Decimal  # interest within the horizon if the option is taken
 
 
 @dataclass(frozen=True)
@@ -282,6 +290,7 @@ class DecisionRecord:
     execution_messages: tuple[str, ...]
     decided_at: datetime
     snapshot: DecisionSnapshot
+    withdrawn_at: Optional[datetime] = None  # set when the owner later withdrew an approved option
 
 
 @dataclass(frozen=True)

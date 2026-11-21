@@ -59,8 +59,18 @@ def test_expense_defaults_date_to_and_rounds_amount():
     assert "expense of EUR 8,000.00 on 2025-07-15" in pe.confirmation_prompt(event)
 
 
-def test_event_may_start_today():
-    assert pe.validate_event(TODAY, "inflow", "2025-05-10", None, 500, "Catering deposit").date_from == TODAY
+@pytest.mark.parametrize("event_type", ["expense", "inflow"])
+def test_payment_dated_today_is_rejected_because_the_forecast_starts_tomorrow(event_type):
+    with pytest.raises(ToolInputError, match="already in the bank balance"):
+        pe.validate_event(TODAY, event_type, "2025-05-10", None, 500, "Catering deposit")
+    assert pe.validate_event(TODAY, event_type, "2025-05-11", None, 500, "Catering deposit").date_from == date(2025, 5, 11)
+
+
+def test_closure_must_end_after_today():
+    with pytest.raises(ToolInputError, match="ends today"):
+        pe.validate_event(TODAY, "closure", "2025-05-10", "2025-05-10", None, "Closed today")
+    event = pe.validate_event(TODAY, "closure", "2025-05-10", "2025-05-11", None, "Closed for the weekend")
+    assert (event.date_from, event.date_to) == (TODAY, date(2025, 5, 11))
 
 
 @pytest.mark.parametrize("event_type", ["payment_deferral", "credit_line", "zamkniecie", "", "DROP TABLE"])
@@ -203,3 +213,146 @@ def test_as_of_header_is_required_outside_a_request():
 
     with pytest.raises(ToolInputError, match="X-As-Of-Date"):
         app._today(NoRequestContext())
+
+
+def test_list_returns_only_events_that_end_after_the_analysis_date():
+    """Same boundary as the backend forecast (date_to > as-of): an event that ended today is not listed."""
+    conn = RecordingConnection([(["id"], [(1,)])])
+    out = pe.list_planned_events(conn, TODAY)
+    statement, params = conn.executed[0]
+    assert "WHERE date_to > %s" in statement and params[0] == TODAY
+    assert out == {"analysis_date": "2025-05-10", "events": [{"id": 1}]}
+
+
+# --- removal -----------------------------------------------------------------------------------------------
+
+EVENT_COLUMN_NAMES = [name.strip() for name in pe.EVENT_COLUMNS.split(",")]
+
+
+def event_row(event_id=12, source="chat", event_type="expense", amount=Decimal("8000.00"),
+              date_from=date(2025, 6, 20), date_to=date(2025, 6, 20), description="New oven"):
+    values = {"id": event_id, "event_type": event_type, "date_from": date_from, "date_to": date_to,
+              "amount_eur": amount, "category": None, "description": description, "original_utterance": "I buy an oven",
+              "source": source, "as_of_date": TODAY, "decision_id": None, "created_at": None}
+    return (EVENT_COLUMN_NAMES, [tuple(values[name] for name in EVENT_COLUMN_NAMES)])
+
+
+NO_ROWS = (EVENT_COLUMN_NAMES, [])
+
+
+def test_removal_proposal_returns_the_chat_event_without_writing():
+    conn = RecordingConnection([event_row()])
+    out = pe.propose_planned_event_removal(conn, 12)
+    assert out["valid"] is True and out["event"]["id"] == 12 and out["event"]["date_from"] == "2025-06-20"
+    assert out["confirmation_prompt"] == ("You want to remove this plan: expense of EUR 8,000.00 on 2025-06-20 - "
+                                          "New oven. Should I remove it from your plans?")
+    assert len(conn.executed) == 1 and conn.executed[0][0].startswith("SELECT") and conn.executed[0][1] == (12,)
+
+
+def test_removal_proposal_describes_a_closure_with_its_days():
+    row = event_row(event_type="closure", amount=None, date_from=date(2025, 6, 1), date_to=date(2025, 6, 21),
+                    description="Holidays")
+    out = pe.propose_planned_event_removal(RecordingConnection([row]), "12")
+    assert "closure from 2025-06-01 to 2025-06-21 (21 days) - Holidays" in out["confirmation_prompt"]
+
+
+def test_removal_of_an_unknown_plan_points_to_the_list():
+    with pytest.raises(ToolInputError, match="no planned event with id 99.*list_planned_events"):
+        pe.propose_planned_event_removal(RecordingConnection([NO_ROWS]), 99)
+    with pytest.raises(ToolInputError, match="numeric id"):
+        pe.propose_planned_event_removal(RecordingConnection([]), "the oven")
+
+
+@pytest.mark.parametrize("tool", [
+    lambda conn: pe.propose_planned_event_removal(conn, 22),
+    lambda conn: pe.remove_planned_event(conn, 22, {22}),
+])
+def test_a_measure_of_an_approved_option_cannot_be_removed(tool):
+    conn = RecordingConnection([event_row(22, source="agent", event_type="credit_line", description="Credit line")])
+    with pytest.raises(ToolInputError, match="Withdraw option"):
+        tool(conn)
+    assert len(conn.executed) == 1 and conn.executed[0][0].startswith("SELECT")
+
+
+@pytest.mark.parametrize("confirmed_ids", [frozenset(), frozenset({13})])
+def test_remove_refuses_an_id_the_owner_did_not_confirm_before_touching_the_database(confirmed_ids):
+    conn = RecordingConnection([])
+    with pytest.raises(ToolInputError, match="has not confirmed its removal"):
+        pe.remove_planned_event(conn, 12, confirmed_ids)
+    assert conn.executed == []
+
+
+def test_remove_deletes_exactly_the_confirmed_chat_row():
+    conn = RecordingConnection([event_row(), event_row()])
+    out = pe.remove_planned_event(conn, 12, {12})
+    assert out == {"removed": True, "event": {
+        "id": 12, "event_type": "expense", "date_from": "2025-06-20", "date_to": "2025-06-20", "amount_eur": 8000.0,
+        "category": None, "description": "New oven", "original_utterance": "I buy an oven", "source": "chat",
+        "as_of_date": "2025-05-10", "decision_id": None, "created_at": None}}
+    statement, params = conn.executed[1]
+    assert statement.startswith("DELETE FROM planned_events WHERE id = %s AND source = %s RETURNING")
+    assert params == (12, "chat")
+
+
+@pytest.mark.parametrize("results", [[NO_ROWS], [event_row(), NO_ROWS]])
+def test_a_confirmed_plan_that_is_already_gone_is_reported_as_already_removed(results):
+    """A repeated request, or the owner removed it in the app between the two turns: not an error."""
+    out = pe.remove_planned_event(RecordingConnection(results), 12, {12})
+    assert (out["removed"], out["already_removed"], out["event_id"]) == (False, True, 12)
+    assert "error" not in out and "already gone" in out["note"]
+
+
+def test_an_unconfirmed_id_is_refused_even_if_the_plan_does_not_exist():
+    conn = RecordingConnection([])
+    with pytest.raises(ToolInputError, match="has not confirmed its removal"):
+        pe.remove_planned_event(conn, 99, {12})
+    assert conn.executed == []
+
+
+class FakeDatabase:
+    """Replaces app.connect / app.connect_write: hands out a recording connection as a context manager."""
+
+    def __init__(self, results):
+        self.connection = RecordingConnection(results)
+        self.opened = 0
+
+    def __call__(self):
+        self.opened += 1
+        return self
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_removal_proposal_tool_uses_the_read_only_connection(monkeypatch):
+    import app
+    database = FakeDatabase([NO_ROWS])
+    monkeypatch.setattr(app, "connect", database)
+    monkeypatch.setattr(app, "connect_write", lambda: pytest.fail("a proposal must not open the write connection"))
+    out = app.propose_planned_event_removal(FakeContext({}), 99)
+    assert out["valid"] is False and "list_planned_events" in out["error"] and database.opened == 1
+
+
+@pytest.mark.parametrize("headers", [{}, {"x-removable-event-ids": ""}, {"x-removable-event-ids": "13, x, 1 2"}])
+def test_remove_tool_needs_the_id_in_the_header_set_by_the_backend(monkeypatch, headers):
+    import app
+    database = FakeDatabase([])
+    monkeypatch.setattr(app, "connect_write", database)
+    out = app.remove_planned_event(FakeContext(headers), 12)
+    assert out["removed"] is False and "has not confirmed its removal" in out["error"]
+    assert database.connection.executed == []
+
+
+def test_remove_tool_deletes_a_plan_listed_in_the_header(monkeypatch, caplog):
+    import app
+    caplog.set_level("INFO")
+    database = FakeDatabase([event_row(), event_row()])
+    monkeypatch.setattr(app, "connect_write", database)
+    out = app.remove_planned_event(FakeContext({"x-removable-event-ids": "7, 12"}), 12)
+    assert out["removed"] is True and out["event"]["id"] == 12
+    assert [statement.split()[0] for statement, _ in database.connection.executed] == ["SELECT", "DELETE"]
+    assert any("removed event=" in record.getMessage() and "New oven" in record.getMessage()
+               for record in caplog.records)   # the only record of what the deleted plan was

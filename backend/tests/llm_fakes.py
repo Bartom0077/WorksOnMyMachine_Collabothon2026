@@ -13,10 +13,12 @@ class FakeLlmClient:
     def __init__(self, *script: Union[LlmResponse, LlmError]):
         self._script = list(script)
         self.requests: list[LlmRequest] = []
+        self.timeouts: list[Optional[float]] = []
         self.stored: dict[str, LlmResponse] = {}
 
-    def respond(self, request: LlmRequest) -> LlmResponse:
+    def respond(self, request: LlmRequest, timeout_seconds: Optional[float] = None) -> LlmResponse:
         self.requests.append(request)
+        self.timeouts.append(timeout_seconds)
         if not self._script:
             raise AssertionError("The fake LLM client was called more often than scripted.")
         step = self._script.pop(0)
@@ -25,7 +27,7 @@ class FakeLlmClient:
         self.stored[step.id] = step
         return step
 
-    def get_response(self, response_id: str) -> LlmResponse:
+    def get_response(self, response_id: str, timeout_seconds: Optional[float] = None) -> LlmResponse:
         if response_id not in self.stored:
             raise LlmResponseNotFoundError(f"unknown response {response_id}")
         return self.stored[response_id]
@@ -72,3 +74,31 @@ def save_duplicate(event_id: int = 7, **fields) -> McpCall:
     return mcp_call("save_planned_event", {"saved": False, "already_saved": True,
                                            "event": saved_event(event_id, **fields),
                                            "note": "This event is already in the plans; nothing was added."})
+
+
+def propose_removal_ok(event_id: int = 7, **fields) -> McpCall:
+    return mcp_call("propose_planned_event_removal", {
+        "valid": True, "event": saved_event(event_id, **fields),
+        "confirmation_prompt": "Should I remove it from your plans?"}, {"event_id": event_id})
+
+
+def propose_removal_rejected(message: str) -> McpCall:
+    return mcp_call("propose_planned_event_removal", {"valid": False, "error": message})
+
+
+def remove_ok(event_id: int = 7, **fields) -> McpCall:
+    return mcp_call("remove_planned_event", {"removed": True, "event": saved_event(event_id, **fields)},
+                    {"event_id": event_id})
+
+
+def remove_refused(event_id: int = 7) -> McpCall:
+    return mcp_call("remove_planned_event", {
+        "removed": False, "error": f"Planned event {event_id} was not removed: the owner has not confirmed its "
+                                   "removal yet."}, {"event_id": event_id})
+
+
+def remove_already_gone(event_id: int = 7) -> McpCall:
+    return mcp_call("remove_planned_event", {
+        "removed": False, "already_removed": True, "event_id": event_id,
+        "note": f"Planned event {event_id} is already gone from the plans; nothing was left to remove."},
+        {"event_id": event_id})

@@ -11,7 +11,10 @@ export interface AsyncResource<T> {
 interface Options {
   /** When false nothing is fetched and any in-flight request is aborted. */
   enabled?: boolean;
-  /** Keep showing the previous data while a reload is in flight (avoids skeleton flicker). */
+  /**
+   * Keep the previous data while a reload is in flight (avoids skeleton flicker) and when a reload fails,
+   * in which case `error` is set next to the now outdated `data`.
+   */
   keepPreviousData?: boolean;
 }
 
@@ -46,7 +49,11 @@ export function useAsyncResource<T>(
       },
       (error: unknown) => {
         if (!controller.signal.aborted) {
-          setState({ data: null, error: toApiError(error), loading: false });
+          setState((previous) => ({
+            data: keepPreviousData ? previous.data : null,
+            error: toApiError(error),
+            loading: false,
+          }));
         }
       },
     );

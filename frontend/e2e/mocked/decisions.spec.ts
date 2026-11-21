@@ -76,7 +76,71 @@ test.describe("decisions", () => {
     await expect(optionB.getByText("Rejected", { exact: true })).toBeVisible();
     await expect(optionB.getByRole("button", { name: /Reject/ })).toHaveCount(0);
     expect(api.requests.decisions[0]).toMatchObject({ option_id: "B", status: "rejected" });
-    await expect(page.getByRole("row", { name: /B: Postpone the transfers/ })).toContainText("Rejected");
+    const historyRow = page.getByRole("row", { name: /B: Postpone the transfers/ });
+    await expect(historyRow).toContainText("Rejected");
+    // Nothing is executed for a rejection, so it is not labelled as a simulated execution.
+    await expect(historyRow).toContainText("Not executed");
+    await expect(historyRow).not.toContainText("SIMULATED");
+  });
+
+  test("rejecting the option being previewed returns the chart to the recommended one", async ({ page }) => {
+    await mockApi(page, {
+      onDecision: (_request, state) => {
+        state.dashboard = {
+          ...redDashboard,
+          options: redDashboard.options.map((option) => (option.id === "B" ? { ...option, rejected: true } : option)),
+        };
+        return rejectedDecision;
+      },
+    });
+    await page.goto("/");
+
+    const legend = page.getByRole("list", { name: "Chart legend" });
+    const optionB = page.getByRole("article", { name: /Option B/ });
+    await optionB.getByRole("button", { name: "Preview on chart" }).click();
+    await expect(legend).toContainText("Forecast with option B");
+
+    await optionB.getByRole("button", { name: "Reject option B" }).click();
+    await expect(optionB.getByText("Rejected", { exact: true })).toBeVisible();
+    await expect(legend).toContainText("Forecast with option E");
+  });
+
+  test("a decision is taken on the forecast on screen, never on one that is still loading", async ({ page }) => {
+    const api = await mockApi(page, {
+      onDecision: (_request, state) => {
+        state.dashboard = approvedDashboard;
+        return approvedDecision;
+      },
+    });
+    await page.goto("/");
+    await expect(page.getByText("AI explanation", { exact: true })).toBeVisible();
+
+    // Open the confirmation for the 60-day board, then let a slow 90-day recalculation start behind it.
+    await page.getByRole("button", { name: "Approve option E" }).click();
+    const dialog = page.getByRole("dialog", { name: /Approve option E/ });
+    api.state.dashboardDelayMs = 1500;
+    api.state.dashboard = { ...redDashboard, horizon_days: 90 };
+    await page.getByRole("radio", { name: "90 days" }).dispatchEvent("click");
+
+    await expect(dialog.getByRole("button", { name: "Recalculating…" })).toBeDisabled();
+    expect(api.requests.decisions).toHaveLength(0);
+
+    // Once the new board is on screen the confirmation refers to it, and so does the request.
+    await dialog.getByRole("button", { name: "Approve (simulated)" }).click();
+    await expect(dialog).toBeHidden();
+    expect(api.requests.decisions[0]).toMatchObject({ horizon_days: 90, option_id: "E", status: "approved" });
+  });
+
+  test("option actions are disabled while the forecast is recalculated", async ({ page }) => {
+    const api = await mockApi(page);
+    await page.goto("/");
+    await expect(page.getByRole("article")).toHaveCount(4);
+
+    api.state.dashboardDelayMs = 1500;
+    await page.getByRole("radio", { name: "90 days" }).check({ force: true });
+    await expect(page.getByRole("button", { name: "Approve option A" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Reject option A" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Approve option A" })).toBeEnabled();
   });
 
   test("shows the conflict when the option is no longer available", async ({ page }) => {
@@ -90,6 +154,27 @@ test.describe("decisions", () => {
     await dialog.getByRole("button", { name: "Approve (simulated)" }).click();
     await expect(dialog.getByRole("alert")).toContainText("Option A is not currently offered.");
     await expect(dialog.getByRole("alert")).toContainText("option_not_available");
+  });
+
+  test("a conflict reloads the forecast so the unavailable option disappears", async ({ page }) => {
+    await mockApi(page, {
+      onDecision: (_request, state) => {
+        state.dashboard = approvedDashboard;
+        return apiError(409, "option_not_available", "Option A is not currently offered.");
+      },
+    });
+    await page.goto("/");
+
+    await page.getByRole("button", { name: "Approve option A" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Approve (simulated)" }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole("alert").filter({ hasText: "Your decision was not saved" })).toContainText(
+      "Option A is not currently offered.",
+    );
+    await expect(page.getByRole("button", { name: "Approve option A" })).toHaveCount(0);
+    await expect(page.getByText("No action needed")).toBeVisible();
   });
 
   test("resetting the demo needs confirmation and clears plans and decisions", async ({ page }) => {

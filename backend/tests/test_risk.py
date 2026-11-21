@@ -4,7 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from domain import ForecastDay, ForecastItem, ItemKind, RiskStatus, RiskWindow
+import service
+from domain import DashboardQuery, ForecastDay, ForecastItem, ItemKind, RiskStatus, RiskWindow
 from risk import assess_risk, classify, risk_drivers
 
 AS_OF = date(2025, 5, 10)
@@ -75,3 +76,19 @@ def test_risk_drivers_sum_fixed_costs_in_the_window():
         ("investment_outflow", Decimal("8666.68"), True), ("rent", Decimal("7600"), False)]
     assert drivers[1].label == "Rent"
     assert risk_drivers(days, None) == ()
+
+
+@pytest.mark.parametrize("as_of, expected", [
+    (date(2025, 5, 10), "In about 7 weeks you will be about €300 short."),
+    (date(2025, 7, 10), "You are already about €16,000 short today, and in about 3 weeks this grows to about "
+                        "€20,000."),
+    (date(2025, 7, 28), "You are already about €12,000 short today. The next 60 days do not get worse than that, "
+                        "but the forecast still shows about €11,000 short in 4 days."),
+    (date(2025, 1, 5), "Your balance (about €100) is already below your €3,000 safety buffer today. It is not "
+                       "projected to fall further in the next 60 days: the lowest projected balance is about "
+                       "€400, in 1 day."),
+])
+def test_headline_takes_todays_balance_into_account(repo, as_of, expected):
+    """Finding: the headline said "will drop to" / "in 5 days you will be short" when today was already worse."""
+    dashboard = service.build_dashboard(repo, DashboardQuery(as_of, 60, Decimal("3000")))
+    assert dashboard.headline == expected

@@ -1,6 +1,6 @@
 # KPI_SPEC — Deterministic KPI Engine (Autonomous CFO / Pizzeria Amalfi)
 
-**Version:** 1.0 · **Status:** implemented in `backend/kpi_engine/` · **Referenced from:** `SPEC.md` §4
+**Version:** 1.0 · **Status:** implemented in `backend/kpi_engine/` · **Product specification:** `ROZWIAZANIE.md`
 
 This document is the single source of truth for *how* the eight financial KPIs are calculated,
 persisted to `kpi_snapshots.metrics` and interpreted by downstream AI agents. Every number the
@@ -114,7 +114,7 @@ in `payment_months` (`all` or e.g. `03;06;09;12`; day clamped to month end), sta
 
 ## 1. KPI catalogue
 
-Status vocabulary (per `SPEC.md`): `HEALTHY` | `WARNING` | `CRITICAL`.
+Status vocabulary: `HEALTHY` | `WARNING` | `CRITICAL`.
 Notation: `B₀` current balance; `B_d` forecast end-of-day balance on day `d` (`d = 1…30`); `F_d` scheduled
 obligations on day `d`; `I`, `V` daily inflow / variable outflow run-rates; `M` monthly fixed-obligation
 run-rate (§0.6); `MCB` minimum cash buffer.
@@ -232,8 +232,7 @@ recommendation; the engine never recommends.
 ## 3. Output contract — `kpi_snapshots.metrics` (JSONB)
 
 One row per `snapshot_date` (= `as_of_date`). Re-running a date **updates** the row in place
-(`INSERT … ON CONFLICT (snapshot_date) DO UPDATE`), keeping its `id` so `agent_proposals.snapshot_id`
-references stay valid.
+(`INSERT … ON CONFLICT (snapshot_date) DO UPDATE`), keeping its `id`, so references to a snapshot stay valid.
 
 ```jsonc
 {
@@ -254,7 +253,7 @@ references stay valid.
   },
   "kpi_metadata": [                           // one entry per key of "kpis", same order
     { "id": "current_cash_balance_eur", "kpi_number": 1, "kpi_group": "current_cash_balance",
-      "label": "Saldo bieżące (EUR)", "label_en": "Current cash balance",
+      "label": "Current cash balance", "label_en": "Current cash balance",
       "value": 33266.35, "unit": "EUR",       // "EUR" | "%" | "ratio"
       "status": "HEALTHY", "is_estimate": false,
       "description": "…", "details": { … } }
@@ -269,7 +268,8 @@ references stay valid.
 ```
 
 The keys `as_of_date`, `currency`, `kpis`, `kpi_metadata` and the meta fields `id/label/value/unit/status`
-follow `SPEC.md` §4; everything else is an additive extension. `data_quality.status` is `OK`, `DEGRADED`
+are the core contract; everything else is an additive extension. `label_en` always equals `label` (both
+English) and is kept for readers of schema 1.0 snapshots. `data_quality.status` is `OK`, `DEGRADED`
 (warnings) or `UNRELIABLE` (any critical flag) — agents should not recommend financial actions on
 `UNRELIABLE` snapshots without saying so.
 
@@ -299,7 +299,7 @@ Parameters are written into `metrics.engine.parameters` so every snapshot is rep
 
 ---
 
-## 5. Validation on 2025 data (demo dates from SPEC.md)
+## 5. Validation on 2025 data (documented balance dates)
 
 Produced by `python -m kpi_engine --as-of-date …` against the `amalfi` database (identical to the
 CSV-based test computation, see `tests/test_integration_db.py`). Nothing is hard-coded; these are outputs.

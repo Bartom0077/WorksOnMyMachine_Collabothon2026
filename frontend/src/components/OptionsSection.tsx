@@ -11,7 +11,8 @@ interface Props {
   recommendedOptionId: string | null;
   previewOptionId: string | null;
   decisions: DecisionFlow;
-  onPreview: (optionId: string) => void;
+  /** Selects the option drawn on the chart; null returns to the recommended one. */
+  onPreview: (optionId: string | null) => void;
 }
 
 function NoActionNeeded({ dashboard }: { dashboard: Dashboard }) {
@@ -92,13 +93,17 @@ export function OptionsSection({
               key={option.id}
               option={option}
               recommended={option.id === recommendedOptionId}
-              aiComment={recommendation?.option_comments[option.id] ?? null}
+              comment={recommendation?.option_comments[option.id] ?? null}
               previewed={option.id === previewOptionId}
               busy={decisions.busyOptionId === option.id}
-              disabled={decisions.busyOptionId !== null}
+              disabled={!decisions.canDecide}
               onPreview={() => onPreview(option.id)}
               onApprove={() => decisions.requestApproval(option)}
-              onReject={() => decisions.reject(option)}
+              onReject={() => {
+                // A rejected option should not stay on the chart just because it was being previewed.
+                if (option.id === previewOptionId) onPreview(null);
+                decisions.reject(option);
+              }}
             />
           ))}
         </ul>

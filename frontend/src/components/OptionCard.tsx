@@ -1,4 +1,4 @@
-import { formatDate, formatEur } from "../lib/format";
+import { creditLineNote, formatDate, formatEur } from "../lib/format";
 import type { RescueOption } from "../types/api";
 import { Icon } from "./Icon";
 import { StatusChip } from "./StatusChip";
@@ -6,7 +6,8 @@ import { StatusChip } from "./StatusChip";
 interface Props {
   option: RescueOption;
   recommended: boolean;
-  aiComment: string | null;
+  /** The engine's one-line verdict on this option (code-written, not AI text). */
+  comment: string | null;
   previewed: boolean;
   busy: boolean;
   disabled: boolean;
@@ -23,7 +24,7 @@ function costText(option: RescueOption): string {
 export function OptionCard({
   option,
   recommended,
-  aiComment,
+  comment,
   previewed,
   busy,
   disabled,
@@ -32,11 +33,12 @@ export function OptionCard({
   onReject,
 }: Props) {
   const titleId = `option-${option.id}-title`;
+  const creditNote = creditLineNote(option.credit_limit_eur, option.new_min_balance_eur);
   const classes = ["option", previewed ? "is-previewed" : "", option.rejected ? "is-rejected" : ""];
 
   return (
     <li>
-      <article className={classes.filter(Boolean).join(" ")} aria-labelledby={titleId} onFocus={onPreview}>
+      <article className={classes.filter(Boolean).join(" ")} aria-labelledby={titleId}>
         <header className="option__head">
           <span className="option__letter" aria-hidden="true">
             {option.id}
@@ -62,6 +64,7 @@ export function OptionCard({
             <dd>
               <span className="option__amount">{formatEur(option.new_min_balance_eur)}</span>
               <span className="muted"> on {formatDate(option.new_min_balance_date)}</span>
+              {creditNote !== null ? <span className="option__note muted">{creditNote}</span> : null}
             </dd>
           </div>
           <div>
@@ -85,15 +88,7 @@ export function OptionCard({
           ) : null}
         </dl>
 
-        {aiComment !== null ? (
-          <p className="option__comment">
-            <Icon name="sparkles" size={14} />
-            <span>
-              <span className="visually-hidden">AI comment: </span>
-              {aiComment}
-            </span>
-          </p>
-        ) : null}
+        {comment !== null ? <p className="option__comment">{comment}</p> : null}
 
         <div className="option__actions">
           <button type="button" className="btn btn--ghost" aria-pressed={previewed} onClick={onPreview}>

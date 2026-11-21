@@ -24,12 +24,14 @@ from forecast import build_forecast
 from kpi_engine.money import money_json
 from ledger import balance_on, build_ledger, daily_balances, opening_anchor
 from options import OptionContext, build_options, recommend
-from repository import Repository, StaleEventError
+from repository import FINGERPRINT_KEY, Repository, StaleEventError
 from risk import assess_risk, risk_drivers
 from texts import build_fallback_recommendation, build_headline, build_insights
 
 __all__ = ["build_dashboard", "build_dossier", "build_fallback_recommendation", "record_decision", "delete_event"]
 
+DECISION_WITHDRAWN_NOTE = ("Withdrawn by the owner: the planned changes of this option were removed from the "
+                           "forecast (simulated).")
 _WEEK_DAYS = 7
 
 
@@ -48,7 +50,7 @@ def build_dashboard(repository: Repository, query: DashboardQuery) -> Dashboard:
     baseline = simulate(events)
     options = build_options(OptionContext(
         as_of=query.as_of_date, buffer_eur=query.buffer_eur, events=events, baseline=baseline, simulate=simulate,
-        rejected_ids=repository.rejected_option_ids(query.as_of_date),
+        rejected_fingerprints=repository.rejected_option_fingerprints(),
     ))
     history_start = max(query.as_of_date - timedelta(days=HISTORY_DAYS - 1), anchor.anchor_date)
     return Dashboard(
@@ -61,7 +63,7 @@ def build_dashboard(repository: Repository, query: DashboardQuery) -> Dashboard:
         forecast=baseline.forecast,
         risk=baseline.risk,
         risk_drivers=risk_drivers(baseline.forecast.days, baseline.risk.risk_window),
-        headline=build_headline(baseline.risk, query.horizon_days, query.buffer_eur),
+        headline=build_headline(baseline.risk, balance, query.horizon_days, query.buffer_eur),
         events=events,
         options=options,
         code_recommended_option_id=recommend(options),
@@ -98,36 +100,49 @@ def build_dossier(dashboard: Dashboard) -> dict:
 
 def record_decision(repository: Repository, query: DashboardQuery, option_id: str, status: DecisionStatus,
                     llm_explanation: Optional[str]) -> DecisionRecord:
-    """Store the owner's decision. The option is re-computed here; client-side numbers are never trusted."""
-    dashboard = build_dashboard(repository, query)
-    option = dashboard.option(option_id)
-    if option is None:
-        raise OptionNotAvailableError(f"Option {option_id} is not currently offered for {query.as_of_date}.")
-    approved = status is DecisionStatus.APPROVED
-    decision = NewDecision(
-        as_of_date=query.as_of_date,
-        horizon_days=query.horizon_days,
-        buffer_eur=query.buffer_eur,
-        option_id=option.id,
-        option_title=option.title,
-        option_description=option.description,
-        status=status,
-        llm_explanation=llm_explanation,
-        execution_messages=option.simulated_actions if approved else (),
-        forecast_snapshot=_forecast_snapshot(dashboard, option),
-    )
-    try:
-        return repository.record_decision(
-            decision,
-            events_to_add=option.events_to_add if approved else (),
-            event_updates=option.event_updates if approved else (),
+    """Store the owner's decision. The option is re-computed here; client-side numbers are never trusted.
+
+    The check and the write run under the decision lock, so two simultaneous approvals cannot both pass.
+    """
+    with repository.decision_lock():
+        dashboard = build_dashboard(repository, query)
+        option = dashboard.option(option_id)
+        if option is None:
+            raise OptionNotAvailableError(f"Option {option_id} is not currently offered for {query.as_of_date}.")
+        approved = status is DecisionStatus.APPROVED
+        if option.rejected and not approved:
+            raise OptionNotAvailableError(f"Option {option_id} has already been rejected.")
+        decision = NewDecision(
+            as_of_date=query.as_of_date,
+            horizon_days=query.horizon_days,
+            buffer_eur=query.buffer_eur,
+            option_id=option.id,
+            option_title=option.title,
+            option_description=option.description,
+            status=status,
+            llm_explanation=llm_explanation,
+            execution_messages=option.simulated_actions if approved else (),
+            forecast_snapshot=_forecast_snapshot(dashboard, option),
         )
-    except StaleEventError as exc:
-        raise OptionNotAvailableError(f"Option {option_id} is no longer available: {exc}") from exc
+        try:
+            return repository.record_decision(
+                decision,
+                events_to_add=option.events_to_add if approved else (),
+                event_updates=option.event_updates if approved else (),
+            )
+        except StaleEventError as exc:
+            raise OptionNotAvailableError(f"Option {option_id} is no longer available: {exc}") from exc
 
 
 def delete_event(repository: Repository, event_id: int) -> None:
-    if not repository.delete_event(event_id):
+    """Remove a plan. An event created by an approved option is never removed alone: the option's changes
+    belong together, so all of them go and the decision log says that the option was withdrawn."""
+    event = next((event for event in repository.list_events() if event.id == event_id), None)
+    if event is None:
+        raise NotFoundError(f"Planned event {event_id} does not exist.")
+    if event.decision_id is not None:
+        repository.withdraw_decision(event.decision_id, DECISION_WITHDRAWN_NOTE)
+    elif not repository.delete_event(event_id):
         raise NotFoundError(f"Planned event {event_id} does not exist.")
 
 
@@ -179,12 +194,14 @@ def _weekly_balance(balance_today: Decimal, days: Sequence[ForecastDay]) -> list
 def _forecast_snapshot(dashboard: Dashboard, option: RescueOption) -> dict:
     """Audit document: the situation before the decision and the option's projected outcome."""
     return {
+        FINGERPRINT_KEY: option.fingerprint,
         "status_before": dashboard.risk.status.value,
         "min_balance_before_eur": money_json(dashboard.risk.min_balance_eur),
         "min_balance_date_before": dashboard.risk.min_balance_date.isoformat(),
         "status_after": option.new_status.value,
         "min_balance_after_eur": money_json(option.new_min_balance_eur),
         "min_balance_date_after": option.new_min_balance_date.isoformat(),
+        "credit_limit_after_eur": money_json(option.credit_limit_eur),
         "cost_eur": money_json(option.cost_eur),
         "current_balance_eur": money_json(dashboard.current_balance_eur),
         "forecast_before": _balance_line(dashboard.forecast.days),

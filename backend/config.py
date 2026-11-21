@@ -21,6 +21,7 @@ MAX_BUFFER_EUR = Decimal("1000000")
 
 # Forecast (Module 2).
 AVERAGES_LOOKBACK_DAYS = 28
+AVERAGES_MIN_OPEN_DAYS = 14  # with fewer open days in the window (a long closure) the lookback is extended
 HISTORY_DAYS = 90
 RECURRING_GRACE_DAYS = 10  # a recurring payment overdue by more than this is treated as discontinued
 
@@ -44,10 +45,18 @@ SURPLUS_ROUNDING_EUR = Decimal("1000")
 # output caps below also decide how much room the prompt, the tool schemas and the chat history have.
 LLM_TIMEOUT_SECONDS = 90.0
 LLM_CONNECT_TIMEOUT_SECONDS = 5.0
+# A chat turn makes several model calls in a row (look up the previous turn, answer, retry in a new thread,
+# comment on the updated forecast). The whole turn gets one budget, and every call gets what is left of it.
+# Keep: CHAT_TURN_BUDGET_SECONDS < nginx proxy_read_timeout (frontend/nginx-default-cfg/api.conf, 180 s)
+#       <= route timeout (deploy/openshift.yaml, 180 s), so the browser gets the backend's answer, not a 504.
+CHAT_TURN_BUDGET_SECONDS = 150.0
+LLM_LOOKUP_TIMEOUT_SECONDS = 10.0   # reading the previous response back from OGX
+LLM_COMMENT_TIMEOUT_SECONDS = 20.0  # the optional forecast comment after a save
 LLM_RECOMMENDATION_MAX_OUTPUT_TOKENS = 900
 LLM_CHAT_MAX_OUTPUT_TOKENS = 600
 LLM_COMMENT_MAX_OUTPUT_TOKENS = 250
 RECOMMENDATION_CACHE_SIZE = 128
+PENDING_PLANS_CACHE_SIZE = 512  # conversations whose unconfirmed plan proposals are remembered
 CHAT_MESSAGE_MAX_CHARS = 2000
 
 

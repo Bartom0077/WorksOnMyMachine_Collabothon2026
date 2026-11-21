@@ -2,8 +2,12 @@
 # Creates the PostgreSQL role used by the MCP data server (mcp_server/) and stores its credentials in the
 # OpenShift secret "amalfi-mcp-db". Idempotent: reuses the password if the secret exists.
 # The password is generated here and never written to the repo.
-# The role is read-only by default; its only write privilege is INSERT of chat events into planned_events
-# (spec section 8.3): transactions, KPIs and owner decisions stay read-only, agent_proposals is invisible.
+# The role is read-only by default; its only write privileges are INSERT and DELETE of chat events in
+# planned_events (ROZWIAZANIE.md §8.3): transactions, KPIs and owner decisions stay read-only.
+# "Chat events" is enforced by the database, not only by the server code: row level security policies let
+# the role insert and delete only source = 'chat' rows, and the table constraint planned_events_chat_scope
+# (db/schema.sql) limits chat rows to closure / expense / inflow. The table owner (the backend's role) is
+# not affected.
 # Prereq: `oc login ...`, db/setup.sh already run. Run from repo root:  bash db/setup_mcp_user.sh
 set -euo pipefail
 
@@ -45,11 +49,22 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${ROLE};
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ${ROLE};
 GRANT SELECT ON bank_transactions, kpi_snapshots, fixed_obligations, account_balance_anchors,
                 planned_events, owner_decisions TO ${ROLE};
--- The only write: inserting a chat event. Column-level, so the role cannot set id, category, decision_id
--- or created_at; no UPDATE / DELETE anywhere.
+-- The only writes: inserting and deleting a chat event. The INSERT is column-level, so the role cannot set id,
+-- category, decision_id or created_at. No UPDATE anywhere, no DELETE on any other table.
 GRANT INSERT (event_type, date_from, date_to, amount_eur, description, original_utterance, source, as_of_date)
     ON planned_events TO ${ROLE};
+GRANT DELETE ON planned_events TO ${ROLE};
 GRANT USAGE ON SEQUENCE planned_events_id_seq TO ${ROLE};
+-- Row level security: the role reads every planned event but may insert and delete only chat rows, so it can
+-- neither create nor remove an agent event (payment_deferral, credit_line). Owner and superuser bypass these
+-- policies.
+ALTER TABLE planned_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS mcp_read_events ON planned_events;
+CREATE POLICY mcp_read_events ON planned_events FOR SELECT TO ${ROLE} USING (true);
+DROP POLICY IF EXISTS mcp_insert_chat_events ON planned_events;
+CREATE POLICY mcp_insert_chat_events ON planned_events FOR INSERT TO ${ROLE} WITH CHECK (source = 'chat');
+DROP POLICY IF EXISTS mcp_delete_chat_events ON planned_events;
+CREATE POLICY mcp_delete_chat_events ON planned_events FOR DELETE TO ${ROLE} USING (source = 'chat');
 SQL
 
-echo "==> Done. Role $ROLE: SELECT on the data tables, INSERT on planned_events only (no agent_proposals)."
+echo "==> Done. Role $ROLE: SELECT on the data tables, INSERT and DELETE of chat events in planned_events only."

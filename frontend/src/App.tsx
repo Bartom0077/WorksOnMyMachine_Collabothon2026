@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useState } from "react";
+import { Suspense, lazy, useCallback, useRef, useState } from "react";
 import { type ApiError, api, toApiError } from "./api/client";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { ChatPanel } from "./components/ChatPanel";
@@ -22,6 +22,9 @@ import type { Dashboard, Recommendation, ScenarioParams } from "./types/api";
 // first dashboard request instead of blocking first paint.
 const balanceChartModule = import("./components/BalanceChart");
 const BalanceChart = lazy(() => balanceChartModule);
+
+/** The width below which the chat sits under the forecast instead of beside it; mirrors the breakpoint in styles.css. */
+const SINGLE_COLUMN_QUERY = "(max-width: 1100px)";
 
 const DEFAULT_PARAMS: ScenarioParams = { as_of_date: "2025-05-10", horizon_days: 60, buffer_eur: 3000 };
 
@@ -84,8 +87,17 @@ export default function App() {
     reloadDecisions();
   }, [reloadDashboard, reloadEvents, reloadDecisions]);
 
-  const chat = useChat(params, refreshAll);
-  const decisions = useDecisionFlow(params, recommendation.data?.explanation ?? null, refreshAll);
+  // In the single-column layout the chat sits below everything else: bring the changed forecast into view.
+  const mainRef = useRef<HTMLElement>(null);
+  const showUpdatedForecast = useCallback(() => {
+    refreshAll();
+    if (window.matchMedia(SINGLE_COLUMN_QUERY).matches) mainRef.current?.scrollIntoView();
+  }, [refreshAll]);
+
+  const chat = useChat(params, showUpdatedForecast);
+  // Decisions are taken on the dashboard on screen, and only while it reflects the latest request.
+  const boardIsCurrent = !dashboard.loading && dashboard.error === null;
+  const decisions = useDecisionFlow(board, boardIsCurrent, recommendation.data?.explanation ?? null, refreshAll);
   const { startNewConversation } = chat;
   const { dismissOutcome } = decisions;
 
@@ -135,7 +147,7 @@ export default function App() {
       />
 
       <div className="layout">
-        <main id="main" className="layout__main" aria-busy={dashboard.loading}>
+        <main id="main" ref={mainRef} className="layout__main" aria-busy={dashboard.loading}>
           <a className="assistant-link" href="#assistant">
             <Icon name="chat" />
             Tell the assistant about your plans
@@ -143,12 +155,20 @@ export default function App() {
           <OutcomeBanner outcome={decisions.outcome} onDismiss={decisions.dismissOutcome} />
 
           {dashboard.error ? (
-            <ErrorNotice title="Your forecast could not be loaded" error={dashboard.error} onRetry={dashboard.reload} />
+            <ErrorNotice
+              title={
+                board === null
+                  ? "Your forecast could not be loaded"
+                  : "Your forecast could not be updated. The figures below are from the last one that loaded."
+              }
+              error={dashboard.error}
+              onRetry={dashboard.reload}
+            />
           ) : null}
           {board === null && dashboard.loading ? <DashboardSkeleton /> : null}
           {board !== null ? (
             <>
-              <StatusHero dashboard={board} headline={recommendation.data?.headline ?? board.headline} />
+              <StatusHero dashboard={board} />
               <Suspense fallback={<ChartSkeleton />}>
                 <BalanceChart dashboard={board} previewOption={previewOption} />
               </Suspense>

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   approvedDashboard,
+  closureEvent,
   fallbackRecommendation,
   greenDashboard,
   redDashboard,
@@ -20,8 +21,7 @@ test.describe("dashboard", () => {
     await expect(hero.getByText("on 3 Jul 2025")).toBeVisible();
     await expect(hero.getByText("in about 8 weeks", { exact: true })).toBeVisible();
 
-    // The LLM headline replaces the deterministic one once the recommendation arrives.
-    await expect(page.getByRole("heading", { name: /roughly €22,000 short/ })).toBeVisible();
+    // The headline is the engine's: it does not change when the AI explanation arrives.
     await expect(page.getByText("AI explanation", { exact: true })).toBeVisible();
     await expect(page.getByText(/no revenue, while salaries, rent/)).toBeVisible();
     await expect(page.getByText(/calculated by deterministic code/)).toBeVisible();
@@ -105,8 +105,7 @@ test.describe("dashboard", () => {
     await mockApi(page, { dashboard: approvedDashboard, events: approvedDashboard.events });
     await page.goto("/");
 
-    // Located by content: the region's name changes when the LLM headline replaces the deterministic one.
-    const hero = page.getByRole("region").filter({ hasText: "Balance today" });
+    const hero = page.getByRole("region", { name: approvedDashboard.headline });
     await expect(hero.getByText("Credit line", { exact: true })).toBeVisible();
     await expect(hero.getByText("€15,000.00")).toBeVisible();
     await expect(page.getByText("From an approved option").first()).toBeVisible();
@@ -135,9 +134,103 @@ test.describe("dashboard", () => {
     const callsBefore = api.requests.dashboard.length;
 
     await page.getByLabel("Safety buffer (€)").fill("-5");
-    await expect(page.getByText("Enter 0 or more")).toBeVisible();
+    await expect(page.getByText("Enter 0 to 1,000,000")).toBeVisible();
     await page.waitForTimeout(800);
     expect(api.requests.dashboard.length).toBe(callsBefore);
+  });
+
+  test("rejects a buffer above the API limit inline", async ({ page }) => {
+    const api = await mockApi(page);
+    await page.goto("/");
+    await expect(page.getByRole("article")).toHaveCount(4);
+    const callsBefore = api.requests.dashboard.length;
+
+    await page.getByLabel("Safety buffer (€)").fill("1e9");
+    await expect(page.getByText("Enter 0 to 1,000,000")).toBeVisible();
+    await page.waitForTimeout(800);
+    expect(api.requests.dashboard.length).toBe(callsBefore);
+  });
+
+  test.describe("keyboard date entry", () => {
+    test.use({ locale: "en-GB" });
+
+    test("typing a date on the keyboard loads the forecast once and resets the chat once", async ({ page }) => {
+      const api = await mockApi(page);
+      await page.goto("/");
+      await expect(page.getByRole("article")).toHaveCount(4);
+      const callsBefore = api.requests.dashboard.length;
+
+      const today = page.getByLabel("Today");
+      await today.focus();
+      // Day, month, year: the segment order of the en-GB locale this describe block runs in.
+      await page.keyboard.type("12062025", { delay: 100 });
+      await expect(today).toHaveValue("2025-06-12");
+
+      await expect(page.getByText("“Today” is now 12 Jun 2025. Started a new conversation.")).toBeVisible();
+      await page.waitForTimeout(800);
+      const requestedDates = api.requests.dashboard.slice(callsBefore).map((query) => query.get("as_of_date"));
+      expect(requestedDates).toEqual(["2025-06-12"]);
+    });
+  });
+
+  test("an out-of-range date is rejected inline and the dashboard stays", async ({ page }) => {
+    const api = await mockApi(page);
+    await page.goto("/");
+    await expect(page.getByRole("article")).toHaveCount(4);
+    const callsBefore = api.requests.dashboard.length;
+
+    const today = page.getByLabel("Today");
+    await today.fill("2026-03-01");
+    await expect(page.getByText("Choose a date within 1 Jan – 31 Dec 2025")).toBeVisible();
+    await expect(today).toHaveAttribute("aria-invalid", "true");
+    await page.waitForTimeout(800);
+    expect(api.requests.dashboard.length).toBe(callsBefore);
+    await expect(page.getByRole("heading", { name: "Your options" })).toBeVisible();
+  });
+
+  test("a failed reload keeps the last forecast on screen and blocks decisions on it", async ({ page }) => {
+    const api = await mockApi(page);
+    await page.goto("/");
+    await expect(page.getByRole("article")).toHaveCount(4);
+
+    api.state.dashboard = apiError(503, "database_unavailable", "The database is not reachable.");
+    await page.getByRole("radio", { name: "90 days" }).check({ force: true });
+
+    const alert = page.getByRole("alert").filter({ hasText: "Your forecast could not be updated" });
+    await expect(alert).toContainText("The database is not reachable.");
+    await expect(page.getByRole("heading", { name: "Your options" })).toBeVisible();
+    await expect(page.getByRole("article")).toHaveCount(4);
+    await expect(page.getByRole("button", { name: "Approve option A" })).toBeDisabled();
+
+    api.state.dashboard = redDashboard;
+    await alert.getByRole("button", { name: "Try again" }).click();
+    await expect(alert).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Approve option A" })).toBeEnabled();
+  });
+
+  test("a closure is shaded for every closed day, including a one-day closure", async ({ page }) => {
+    const oneDay = { ...closureEvent, id: 31, date_from: "2025-06-02", date_to: "2025-06-02" };
+    const threeDays = { ...closureEvent, id: 32, date_from: "2025-06-10", date_to: "2025-06-12" };
+    await mockApi(page, { dashboard: { ...redDashboard, events: [oneDay, threeDays] } });
+    await page.goto("/");
+
+    const bands = page.locator(".recharts-reference-area-rect");
+    await expect(bands).toHaveCount(2);
+    const widths = await bands.evaluateAll((rects) => rects.map((rect) => rect.getBoundingClientRect().width));
+    const [oneDayWidth = 0, threeDayWidth = 0] = widths;
+    expect(oneDayWidth).toBeGreaterThan(1);
+    expect(threeDayWidth / oneDayWidth).toBeCloseTo(3, 1);
+  });
+
+  test("once nothing needs doing the chart no longer says “If you do nothing”", async ({ page }) => {
+    await mockApi(page, { dashboard: approvedDashboard, events: approvedDashboard.events });
+    await page.goto("/");
+
+    await expect(page.getByText(/The forecast for the next 60 days reaches its lowest point of -€10,097.60/)).toBeVisible();
+    await expect(page.getByText(/If you do nothing/)).toHaveCount(0);
+    await expect(page.locator(".recharts-wrapper").getByText("Safety buffer (€3,000 above the credit limit)")).toBeVisible();
+    await page.getByText("Show the forecast as a table").click();
+    await expect(page.getByRole("columnheader", { name: "Forecast", exact: true })).toBeVisible();
   });
 
   test("shows the server error and recovers on retry", async ({ page }) => {

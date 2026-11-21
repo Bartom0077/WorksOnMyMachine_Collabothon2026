@@ -59,7 +59,8 @@ class ChatRequest(SimulationParams):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     message: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_CHARS)
-    conversation_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    # The id of an OGX response (e.g. "resp_3f2a…"). It becomes part of an OGX URL, so only id characters pass.
+    conversation_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,200}$")
 
 
 class _Response(BaseModel):
@@ -197,6 +198,7 @@ class DecisionSnapshotOut(_Response):
     min_balance_date_before: date
     status_after: RiskStatus
     min_balance_after_eur: Eur
+    credit_limit_after_eur: OptionalEur
 
 
 class DecisionOut(_Response):
@@ -212,6 +214,7 @@ class DecisionOut(_Response):
     llm_explanation: Optional[str]
     execution_messages: list[str]
     decided_at: datetime
+    withdrawn_at: Optional[datetime]
     snapshot: DecisionSnapshotOut
 
 
@@ -254,6 +257,9 @@ class ChatResponse(_Response):
     reply: str
     pending_events: list[ChatEventDraftOut]
     saved_events: list[EventOut]
+    # Saved plans the assistant asks the owner to confirm for removal, and the plans removed in this turn.
+    pending_removals: list[EventOut]
+    removed_events: list[EventOut]
     tool_calls: list[ToolCallOut]
     events_changed: bool
 

@@ -5,6 +5,8 @@ its effect is obtained by re-running the very same forecast and risk code, never
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import ROUND_CEILING, Decimal
@@ -34,7 +36,7 @@ from domain import (
     Scenario,
 )
 from events import add_months
-from kpi_engine.money import ZERO, cents
+from kpi_engine.money import ZERO, cents, money_json
 from texts import format_day, format_eur, format_period
 
 Simulate = Callable[[Sequence[EventDraft]], Scenario]
@@ -44,6 +46,8 @@ _STATUS_RANK = {RiskStatus.GREEN: 0, RiskStatus.YELLOW: 1, RiskStatus.RED: 2}
 # Non-financial "pain" used as the last tie-breaker of the code ranking (lower = easier for the owner).
 _PAIN_NONE, _PAIN_RESCHEDULE, _PAIN_FAMILY_TALK, _PAIN_LESS_HOLIDAY = 0, 1, 2, 3
 
+_MIN_COMPARISON_EUR = Decimal("1")  # interest below one euro is not quoted as "about €0"
+
 
 @dataclass(frozen=True)
 class OptionContext:
@@ -52,7 +56,11 @@ class OptionContext:
     events: tuple[PlannedEvent, ...]
     baseline: Scenario
     simulate: Simulate
-    rejected_ids: frozenset[str] = frozenset()
+    rejected_fingerprints: frozenset[str] = frozenset()
+
+    @property
+    def last_forecast_day(self) -> date:
+        return self.baseline.forecast.days[-1].date
 
 
 @dataclass(frozen=True)
@@ -69,6 +77,10 @@ class _Proposal:
     @property
     def adds_credit_line(self) -> bool:
         return any(event.event_type is EventType.CREDIT_LINE for event in self.events_to_add)
+
+    @property
+    def fingerprint(self) -> str:
+        return option_fingerprint(self.id, self.events_to_add, self.event_updates)
 
 
 def build_options(context: OptionContext) -> tuple[RescueOption, ...]:
@@ -87,6 +99,20 @@ def recommend(options: Sequence[RescueOption]) -> Optional[str]:
         return None
     best = min(candidates, key=lambda o: (_STATUS_RANK[o.new_status], o.cost_eur, o.pain_rank, o.id))
     return best.id
+
+
+def option_fingerprint(option_id: str, events_to_add: Sequence[EventDraft],
+                       event_updates: Sequence[EventUpdate]) -> str:
+    """Identifies WHAT an option would do (its concrete changes), so that a rejection sticks to that proposal
+    only and not to whatever is offered under the same letter in a different situation."""
+    content = {
+        "option": option_id,
+        "add": [[event.event_type.value, event.date_from.isoformat(), event.date_to.isoformat(),
+                 money_json(event.amount_eur), event.category] for event in events_to_add],
+        "update": [[update.event_id, update.date_from.isoformat(), update.date_to.isoformat()]
+                   for update in event_updates],
+    }
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def apply_changes(events: Sequence[EventDraft], events_to_add: Sequence[EventDraft],
@@ -142,20 +168,32 @@ def _evaluate(context: OptionContext, proposal: _Proposal) -> RescueOption:
         event_updates=proposal.event_updates,
         scenario=scenario,
         pain_rank=proposal.pain_rank,
-        rejected=proposal.id in context.rejected_ids,
+        rejected=proposal.fingerprint in context.rejected_fingerprints,
+        fingerprint=proposal.fingerprint,
     )
 
 
 def _cost_note(proposal: _Proposal, scenario: Scenario, cost: Decimal) -> Optional[str]:
     if proposal.adds_credit_line:
-        comparison = unarranged_overdraft_cost(scenario.forecast.days)
-        return (f"Interest at {_percent(CREDIT_LINE_INTEREST_RATE)} p.a. (assumed rate) on the amount actually used "
-                f"within the forecast horizon. An unarranged overdraft at {_percent(UNARRANGED_OVERDRAFT_RATE)} p.a. "
-                f"would cost about {format_eur(comparison)} for the same shortfall.")
+        return _credit_line_cost_note(scenario, cost)
     if cost > 0:
-        return (f"The step itself is free, but the account would still be overdrawn: about {format_eur(cost)} "
+        interest = f"about {format_eur(cost)}" if cost >= _MIN_COMPARISON_EUR else "less than €1"
+        return (f"The step itself is free, but the account would still be overdrawn: {interest} "
                 f"of overdraft interest within the forecast horizon.")
     return None
+
+
+def _credit_line_cost_note(scenario: Scenario, cost: Decimal) -> str:
+    if cost == 0:
+        return ("A stand-by line: the balance is not expected to go below zero, so no interest is expected "
+                "within the forecast horizon.")
+    note = (f"Interest at {_percent(CREDIT_LINE_INTEREST_RATE)} p.a. (assumed rate) on the amount actually used "
+            f"within the forecast horizon.")
+    comparison = unarranged_overdraft_cost(scenario.forecast.days)
+    if comparison < _MIN_COMPARISON_EUR:
+        return note
+    return (f"{note} An unarranged overdraft at {_percent(UNARRANGED_OVERDRAFT_RATE)} p.a. would cost about "
+            f"{format_eur(comparison)} for the same shortfall.")
 
 
 def _percent(rate: Decimal) -> str:
@@ -170,7 +208,7 @@ def _credit_line(context: OptionContext) -> _Proposal:
         id="A",
         title="Credit line",
         description=(f"Arrange a {format_eur(event.amount_eur)} credit line with {BANK_NAME}. You only pay interest "
-                     f"on the amount you actually use, and the {format_eur(context.buffer_eur)} buffer stays intact."),
+                     f"on the amount you actually use{_buffer_clause(context.buffer_eur)}."),
         non_financial_cost=None,
         simulated_actions=(_credit_line_action(event),),
         pain_rank=_PAIN_NONE,
@@ -190,6 +228,10 @@ def _credit_line_event(context: OptionContext, scenario: Scenario) -> EventDraft
     )
 
 
+def _buffer_clause(buffer_eur: Decimal) -> str:
+    return f", and the {format_eur(buffer_eur)} buffer stays intact" if buffer_eur > 0 else ""
+
+
 def _credit_line_action(event: EventDraft) -> str:
     return f"Credit line request for {format_eur(event.amount_eur)} sent to {BANK_NAME} (simulated)."
 
@@ -198,28 +240,32 @@ def _credit_line_action(event: EventDraft) -> str:
 
 @dataclass(frozen=True)
 class _DeferrablePayment:
-    day: date
+    due: date  # the regular due date
     category: str
     amount_eur: Decimal  # positive
 
+    @property
+    def new_due(self) -> date:
+        return add_months(self.due, DEFERRAL_MONTHS)
+
 
 def _defer_payments(context: OptionContext) -> Optional[_Proposal]:
-    window = context.baseline.risk.risk_window
-    payments = _deferrable_payments(context.baseline, window)
-    if window is None or not payments:
+    payments = _deferrable_payments(context.baseline, context.baseline.risk.risk_window)
+    if not payments:
         return None
     categories = sorted({payment.category for payment in payments})
     labels = " and ".join(_lower_first(CATEGORIES[key].label) for key in categories)
     total = sum((payment.amount_eur for payment in payments), ZERO)
+    description = (f"Postpone {_count(len(payments), 'payment')} ({format_eur(total)} in total) due before the "
+                   f"low point by {DEFERRAL_MONTHS} months. The money is still owed — it is paid later.")
     return _Proposal(
         id="B",
         title=f"Postpone the {labels}",
-        description=(f"Postpone {_count(len(payments), 'payment')} ({format_eur(total)} in total) due before the "
-                     f"low point by {DEFERRAL_MONTHS} months. The money is still owed — it is paid later."),
+        description=" ".join(filter(None, [description, _beyond_horizon_note(payments, context)])),
         non_financial_cost=_deferral_trade_off(categories),
         simulated_actions=tuple(_deferral_action(payment) for payment in payments),
         pain_rank=_PAIN_FAMILY_TALK,
-        events_to_add=tuple(_deferral_event(key, window) for key in categories),
+        events_to_add=tuple(_deferral_event(payment) for payment in payments),
     )
 
 
@@ -227,26 +273,39 @@ def _deferrable_payments(scenario: Scenario, window: Optional[RiskWindow]) -> li
     if window is None:
         return []
     return [
-        _DeferrablePayment(day.date, item.category, -item.amount_eur)
+        _DeferrablePayment(item.due_date or day.date, item.category, -item.amount_eur)
         for day in scenario.forecast.days if window.start <= day.date <= window.end
         for item in day.items if item.kind is ItemKind.FIXED and CATEGORIES[item.category].deferrable
     ]
 
 
-def _deferral_event(category: str, window: RiskWindow) -> EventDraft:
+def _beyond_horizon_note(payments: Sequence[_DeferrablePayment], context: OptionContext) -> Optional[str]:
+    """Postponed money that leaves the account after the last forecast day flatters the forecast: say so."""
+    beyond = [payment for payment in payments if payment.new_due > context.last_forecast_day]
+    if not beyond:
+        return None
+    total = sum((payment.amount_eur for payment in beyond), ZERO)
+    days = ", ".join(format_day(payment.new_due) for payment in beyond)
+    return (f"Note: {format_eur(total)} of it falls due after the end of this forecast ({days}), so the forecast "
+            f"does not show that money leaving yet.")
+
+
+def _deferral_event(payment: _DeferrablePayment) -> EventDraft:
+    """One concrete obligation per postponed payment: originally due on ``date_from``, now paid on ``date_to``."""
     return EventDraft(
         event_type=EventType.PAYMENT_DEFERRAL,
-        date_from=window.start,
-        date_to=window.end,
-        category=category,
-        description=f"{CATEGORIES[category].label}: payments postponed by {DEFERRAL_MONTHS} months",
+        date_from=payment.due,
+        date_to=payment.new_due,
+        amount_eur=payment.amount_eur,
+        category=payment.category,
+        description=(f"{CATEGORIES[payment.category].label}: payment of {format_day(payment.due)} postponed to "
+                     f"{format_day(payment.new_due)}"),
     )
 
 
 def _deferral_action(payment: _DeferrablePayment) -> str:
-    new_day = add_months(payment.day, DEFERRAL_MONTHS)
-    return (f"{CATEGORIES[payment.category].label}: payment of {format_day(payment.day)} postponed to "
-            f"{format_day(new_day)} (simulated).")
+    return (f"{CATEGORIES[payment.category].label}: payment of {format_day(payment.due)} postponed to "
+            f"{format_day(payment.new_due)} (simulated).")
 
 
 def _deferral_trade_off(categories: Sequence[str]) -> str:
@@ -258,18 +317,26 @@ def _deferral_trade_off(categories: Sequence[str]) -> str:
 # --------------------------------------------------------------------------- C: shorter closure
 
 def _shorter_closure(context: OptionContext) -> Optional[_Proposal]:
-    closure = _longest_upcoming_closure(context)
-    if closure is None:
+    """Reopen earlier: after ``SHORT_CLOSURE_DAYS`` days, or tomorrow if the closure has already run that long."""
+    candidates = [(closure, _shortened_end(closure, context.as_of)) for closure in _long_closures(context)]
+    candidates = [(closure, new_end) for closure, new_end in candidates if new_end < closure.date_to]
+    if not candidates:
         return None
-    new_end = closure.date_from + timedelta(days=SHORT_CLOSURE_DAYS - 1)
+    closure, new_end = max(candidates, key=lambda pair: ((pair[0].date_to - pair[1]).days,
+                                                         -pair[0].date_from.toordinal(), -pair[0].id))
     days_given_up = (closure.date_to - new_end).days
     reopening = new_end + timedelta(days=1)
+    original_reopening = format_day(closure.date_to + timedelta(days=1))
+    if closure.date_from <= context.as_of:
+        description = (f"Cut the current closure short: reopen on {format_day(reopening)} instead of "
+                       f"{original_reopening}.")
+    else:
+        description = (f"Close for {SHORT_CLOSURE_DAYS} days only ({format_period(closure.date_from, new_end)}) "
+                       f"and reopen on {format_day(reopening)} instead of {original_reopening}.")
     return _Proposal(
         id="C",
         title="Shorter closure",
-        description=(f"Close for {SHORT_CLOSURE_DAYS} days only ({format_period(closure.date_from, new_end)}) "
-                     f"and reopen on {format_day(reopening)} instead of "
-                     f"{format_day(closure.date_to + timedelta(days=1))}."),
+        description=description,
         non_financial_cost=f"{_count(days_given_up, 'day')} less holiday",
         simulated_actions=(f"Closure shortened to {format_period(closure.date_from, new_end)}; reopening on "
                            f"{format_day(reopening)} (simulated).",),
@@ -278,15 +345,18 @@ def _shorter_closure(context: OptionContext) -> Optional[_Proposal]:
     )
 
 
-def _longest_upcoming_closure(context: OptionContext) -> Optional[PlannedEvent]:
-    last_day = context.baseline.forecast.days[-1].date
-    closures = [
+def _long_closures(context: OptionContext) -> list[PlannedEvent]:
+    """Closures longer than the short one that are still running or start within the horizon."""
+    return [
         event for event in context.events
-        if event.event_type is EventType.CLOSURE and context.as_of < event.date_from <= last_day
-        and _length_days(event) > SHORT_CLOSURE_DAYS
+        if event.event_type is EventType.CLOSURE and event.date_to > context.as_of
+        and event.date_from <= context.last_forecast_day and _length_days(event) > SHORT_CLOSURE_DAYS
     ]
-    return max(closures, key=lambda event: (_length_days(event), -event.date_from.toordinal(), -event.id),
-               default=None)
+
+
+def _shortened_end(closure: PlannedEvent, as_of: date) -> date:
+    """Last closed day of the shortened closure; a day that has already passed cannot be given back."""
+    return max(closure.date_from + timedelta(days=SHORT_CLOSURE_DAYS - 1), as_of)
 
 
 def _length_days(event: EventDraft) -> int:
@@ -304,6 +374,8 @@ def _move_expenses(context: OptionContext) -> Optional[_Proposal]:
     if not expenses:
         return None
     new_day = window.end + timedelta(days=1)
+    if new_day > context.last_forecast_day:
+        return None  # the expense would only move out of sight, beyond the forecast horizon
     total = sum((event.amount_eur or ZERO for event in expenses), ZERO)
     return _Proposal(
         id="D",
@@ -319,7 +391,7 @@ def _move_expenses(context: OptionContext) -> Optional[_Proposal]:
     )
 
 
-# --------------------------------------------------------------------------- E: B + smaller credit line
+# --------------------------------------------------------------------------- E: B + credit line
 
 def _deferral_plus_credit_line(context: OptionContext) -> Optional[_Proposal]:
     deferral = _defer_payments(context)
@@ -329,10 +401,12 @@ def _deferral_plus_credit_line(context: OptionContext) -> Optional[_Proposal]:
     if after_deferral.risk.status is RiskStatus.GREEN:
         return None  # postponing alone is enough; a credit line on top would add nothing
     credit_line = _credit_line_event(context, after_deferral)
+    # "Smaller" is only true when postponing really reduces the limit that option A would need.
+    smaller = "smaller " if credit_line.amount_eur < required_credit_limit(context.baseline, context.buffer_eur) else ""
     return _Proposal(
         id="E",
-        title="Postpone payments + smaller credit line",
-        description=(f"{deferral.description} Cover what is still missing with a smaller "
+        title=f"Postpone payments + {smaller}credit line",
+        description=(f"{deferral.description} Cover what is still missing with a {smaller}"
                      f"{format_eur(credit_line.amount_eur)} credit line with {BANK_NAME}."),
         non_financial_cost=deferral.non_financial_cost,
         simulated_actions=(_credit_line_action(credit_line), *deferral.simulated_actions),

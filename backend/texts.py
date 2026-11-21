@@ -50,21 +50,47 @@ def format_time_until(days: int) -> str:
     return f"about {round(days / 7)} weeks"
 
 
-def build_headline(risk: RiskAssessment, horizon_days: int, buffer_eur: Decimal) -> str:
+def build_headline(risk: RiskAssessment, current_balance_eur: Decimal, horizon_days: int, buffer_eur: Decimal) -> str:
     """One plain sentence describing what will happen (also the fallback for the LLM headline)."""
-    when = format_time_until(risk.days_until_min)
     if risk.status is RiskStatus.RED:
-        shortfall = format_approx_eur(-risk.headroom_eur)
-        beyond = " beyond your credit line" if risk.credit_limit_eur is not None else ""
-        return f"In {when} you will be about {shortfall} short{beyond}."
+        return _shortfall_headline(risk, current_balance_eur, horizon_days)
     if risk.status is RiskStatus.YELLOW:
-        return (f"In {when} your balance will drop to about {format_approx_eur(risk.min_balance_eur)}, "
-                f"leaving less than your {format_eur(buffer_eur)} safety buffer.")
+        return _thin_buffer_headline(risk, current_balance_eur, horizon_days, buffer_eur)
     lowest = format_approx_eur(risk.min_balance_eur)
     if risk.credit_limit_eur is not None and risk.min_balance_eur < 0:
         return (f"You are covered for the next {horizon_days} days: the lowest projected balance (about {lowest}) "
                 f"stays within your {format_eur(risk.credit_limit_eur)} credit line.")
     return f"You are in the clear for the next {horizon_days} days: the lowest projected balance is about {lowest}."
+
+
+def _shortfall_headline(risk: RiskAssessment, current_balance_eur: Decimal, horizon_days: int) -> str:
+    when = format_time_until(risk.days_until_min)
+    shortfall = format_approx_eur(-risk.headroom_eur)
+    beyond = " beyond your credit line" if risk.credit_limit_eur is not None else ""
+    headroom_today = current_balance_eur - risk.floor_eur
+    if headroom_today >= 0:
+        return f"In {when} you will be about {shortfall} short{beyond}."
+    short_today = format_approx_eur(-headroom_today)
+    if risk.headroom_eur < headroom_today:
+        return (f"You are already about {short_today} short{beyond} today, and in {when} this grows to about "
+                f"{shortfall}.")
+    return (f"You are already about {short_today} short{beyond} today. The next {horizon_days} days do not get "
+            f"worse than that, but the forecast still shows about {shortfall} short in {when}.")
+
+
+def _thin_buffer_headline(risk: RiskAssessment, current_balance_eur: Decimal, horizon_days: int,
+                          buffer_eur: Decimal) -> str:
+    when = format_time_until(risk.days_until_min)
+    lowest = format_approx_eur(risk.min_balance_eur)
+    buffer = format_eur(buffer_eur)
+    if current_balance_eur - risk.floor_eur >= buffer_eur:
+        return f"In {when} your balance will drop to about {lowest}, leaving less than your {buffer} safety buffer."
+    if risk.min_balance_eur < current_balance_eur:
+        return (f"Your balance is already below your {buffer} safety buffer today, and in {when} it will drop "
+                f"further to about {lowest}.")
+    return (f"Your balance (about {format_approx_eur(current_balance_eur)}) is already below your {buffer} safety "
+            f"buffer today. It is not projected to fall further in the next {horizon_days} days: the lowest "
+            f"projected balance is about {lowest}, in {when}.")
 
 
 def build_insights(risk: RiskAssessment, current_balance_eur: Decimal, horizon_days: int, buffer_eur: Decimal
@@ -143,9 +169,19 @@ def _rationale(dashboard: Dashboard, recommended: Optional[RescueOption]) -> str
 
 
 def _option_comment(option: RescueOption) -> str:
-    comment = (f"Lowest balance {format_eur(option.new_min_balance_eur)} on "
-               f"{format_day(option.new_min_balance_date)} ({option.new_status.value}); "
-               f"estimated cost {format_eur(option.cost_eur)}.")
+    """One line per option: its outcome in plain words with the engine's figures, the cost and the trade-off."""
+    lowest = f"lowest balance {format_eur(option.new_min_balance_eur)} on {format_day(option.new_min_balance_date)}"
+    comment = f"{_outcome_in_words(option)}: {lowest}. Estimated cost {format_eur(option.cost_eur)}."
     if option.non_financial_cost:
         comment = f"{comment} Trade-off: {option.non_financial_cost}."
     return comment
+
+
+def _outcome_in_words(option: RescueOption) -> str:
+    if option.new_status is RiskStatus.RED:
+        return "Still short of money"
+    if option.new_status is RiskStatus.YELLOW:
+        return "No shortfall, but below your safety buffer"
+    if option.new_min_balance_eur < 0:
+        return "Safe within the credit line"
+    return "Safe"

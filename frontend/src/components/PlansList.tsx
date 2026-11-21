@@ -3,6 +3,7 @@ import { type ApiError, api, toApiError } from "../api/client";
 import type { AsyncResource } from "../hooks/useAsyncResource";
 import { EVENT_TYPE_LABELS, formatDateRange, formatEur } from "../lib/format";
 import type { EventType, EventsResponse, PlannedEvent } from "../types/api";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { EmptyState, ErrorNotice, Skeleton } from "./Feedback";
 import { Icon, type IconName } from "./Icon";
 
@@ -22,10 +23,14 @@ interface Props {
 interface PlanRowProps {
   event: PlannedEvent;
   removing: boolean;
+  /** True while any removal is in flight: one at a time, so their state cannot clobber each other. */
+  disabled: boolean;
   onRemove: () => void;
 }
 
-function PlanRow({ event, removing, onRemove }: PlanRowProps) {
+function PlanRow({ event, removing, disabled, onRemove }: PlanRowProps) {
+  // A measure of an approved option cannot be removed alone: the whole option is withdrawn.
+  const withdrawsOption = event.source === "agent";
   return (
     <li className="plan">
       <span className={`plan__icon plan__icon--${event.event_type}`} aria-hidden="true">
@@ -53,11 +58,11 @@ function PlanRow({ event, removing, onRemove }: PlanRowProps) {
         type="button"
         className="btn btn--ghost btn--small"
         onClick={onRemove}
-        disabled={removing}
-        aria-label={`Remove plan: ${event.description}`}
+        disabled={disabled}
+        aria-label={`${withdrawsOption ? "Withdraw option" : "Remove plan"}: ${event.description}`}
       >
         <Icon name="trash" size={14} />
-        {removing ? "Removing…" : "Remove"}
+        {removing ? "Removing…" : withdrawsOption ? "Withdraw option" : "Remove"}
       </button>
     </li>
   );
@@ -67,12 +72,16 @@ function PlanRow({ event, removing, onRemove }: PlanRowProps) {
 export function PlansList({ events, onRemoved }: Props) {
   const [removingId, setRemovingId] = useState<number | null>(null);
   const [removeError, setRemoveError] = useState<ApiError | null>(null);
+  // Measures created by an approved option are removed only after an explicit confirmation.
+  const [awaitingConfirmationId, setAwaitingConfirmationId] = useState<number | null>(null);
 
   async function remove(id: number) {
+    if (removingId !== null) return;
     setRemovingId(id);
     setRemoveError(null);
     try {
       await api.deleteEvent(id);
+      setAwaitingConfirmationId(null);
       onRemoved();
     } catch (error) {
       setRemoveError(toApiError(error));
@@ -81,7 +90,24 @@ export function PlansList({ events, onRemoved }: Props) {
     }
   }
 
+  function requestRemoval(event: PlannedEvent) {
+    if (event.source === "agent") {
+      setRemoveError(null);
+      setAwaitingConfirmationId(event.id);
+    } else {
+      void remove(event.id);
+    }
+  }
+
   const list = events.data?.events ?? null;
+  const awaitingConfirmation = list?.find((event) => event.id === awaitingConfirmationId) ?? null;
+  // The backend withdraws an approved option as a whole: every measure of the same decision goes with it.
+  const withdrawnTogether =
+    awaitingConfirmation === null
+      ? []
+      : (list ?? []).filter(
+          (event) => event.decision_id !== null && event.decision_id === awaitingConfirmation.decision_id,
+        );
 
   return (
     <section className="card" aria-labelledby="plans-title">
@@ -90,7 +116,7 @@ export function PlansList({ events, onRemoved }: Props) {
           My plans
         </h2>
       </div>
-      {removeError ? (
+      {removeError !== null && awaitingConfirmation === null ? (
         <ErrorNotice title="The plan was not removed" error={removeError} onDismiss={() => setRemoveError(null)} />
       ) : null}
       {events.error ? (
@@ -107,11 +133,46 @@ export function PlansList({ events, onRemoved }: Props) {
               key={event.id}
               event={event}
               removing={removingId === event.id}
-              onRemove={() => void remove(event.id)}
+              disabled={removingId !== null}
+              onRemove={() => requestRemoval(event)}
             />
           ))}
         </ul>
       ) : null}
+      <ConfirmDialog
+        open={awaitingConfirmation !== null}
+        title="Withdraw this approved option?"
+        confirmLabel="Withdraw option"
+        busyLabel="Withdrawing…"
+        busy={removingId !== null}
+        error={removeError}
+        danger
+        onConfirm={() => {
+          if (awaitingConfirmation !== null) void remove(awaitingConfirmation.id);
+        }}
+        onCancel={() => {
+          setAwaitingConfirmationId(null);
+          setRemoveError(null);
+        }}
+      >
+        {awaitingConfirmation !== null ? (
+          <>
+            <p>
+              <strong>{awaitingConfirmation.description}</strong> was put in place by an option you approved. An
+              option is withdrawn as a whole, so this removes {withdrawnTogether.length > 1 ? "all of" : ""} its
+              measures from your forecast:
+            </p>
+            <ul>
+              {withdrawnTogether.map((event) => (
+                <li key={event.id}>{event.description}</li>
+              ))}
+            </ul>
+            <p>
+              The shortfall the option covered may return. The approval itself stays in your decision history.
+            </p>
+          </>
+        ) : null}
+      </ConfirmDialog>
     </section>
   );
 }

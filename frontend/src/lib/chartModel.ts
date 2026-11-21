@@ -11,22 +11,20 @@ export interface ChartRow {
   option?: number;
 }
 
-export interface ClosureBand {
+interface ClosureBand {
   id: number;
   start: number;
   end: number;
-  description: string;
 }
 
-export interface EventMarker {
+interface EventMarker {
   id: number;
   time: number;
   balance: number;
   eventType: "expense" | "inflow";
-  description: string;
 }
 
-export interface ChartModel {
+interface ChartModel {
   rows: ChartRow[];
   todayTime: number;
   ticks: number[];
@@ -75,16 +73,19 @@ function balanceTicks(values: number[]): number[] {
   return ticks;
 }
 
+/**
+ * Each day is a point on the time axis, so a band reaches half a day beyond its first and last day:
+ * an N-day closure then covers N day slots and a one-day closure stays visible.
+ */
 function closureBands(events: PlannedEvent[], first: number, last: number): ClosureBand[] {
   return events
     .filter((event) => event.event_type === "closure")
     .map((event) => ({
       id: event.id,
-      start: Math.max(dateToTime(event.date_from), first),
-      end: Math.min(dateToTime(event.date_to), last),
-      description: event.description,
+      start: Math.max(dateToTime(event.date_from) - DAY_MS / 2, first),
+      end: Math.min(dateToTime(event.date_to) + DAY_MS / 2, last),
     }))
-    .filter((band) => band.start <= band.end);
+    .filter((band) => band.start < band.end);
 }
 
 function eventMarkers(events: PlannedEvent[], rows: Map<string, ChartRow>): EventMarker[] {
@@ -98,7 +99,6 @@ function eventMarkers(events: PlannedEvent[], rows: Map<string, ChartRow>): Even
       time: dateToTime(event.date_from),
       balance,
       eventType: event.event_type,
-      description: event.description,
     });
   }
   return markers;

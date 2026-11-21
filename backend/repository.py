@@ -6,8 +6,9 @@ environment variables (or ``DATABASE_URL``).
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import date
-from typing import Optional, Protocol, Sequence
+from typing import ContextManager, Iterator, Optional, Protocol, Sequence
 
 import psycopg
 from psycopg.rows import dict_row
@@ -50,7 +51,18 @@ class Repository(Protocol):
 
     def list_decisions(self) -> Sequence[DecisionRecord]: ...
 
-    def rejected_option_ids(self, as_of: date) -> frozenset[str]: ...
+    def rejected_option_fingerprints(self) -> frozenset[str]:
+        """Fingerprints of proposals whose latest decision is a rejection (see ``options.option_fingerprint``)."""
+        ...
+
+    def decision_lock(self) -> ContextManager[None]:
+        """Serialises decision making: checking that an option is still offered and storing the decision."""
+        ...
+
+    def withdraw_decision(self, decision_id: int, note: str) -> None:
+        """Remove every planned event an approved decision created, mark the decision as withdrawn and add
+        ``note`` to its audit messages."""
+        ...
 
     def record_decision(self, decision: NewDecision, events_to_add: Sequence[EventDraft],
                         event_updates: Sequence[EventUpdate]) -> DecisionRecord: ...
@@ -61,7 +73,10 @@ class Repository(Protocol):
 _EVENT_COLUMNS = ("id, event_type, date_from, date_to, amount_eur, category, description, original_utterance, "
                   "source, as_of_date, decision_id, created_at")
 _DECISION_COLUMNS = ("id, as_of_date, horizon_days, buffer_eur, option_id, option_title, option_description, "
-                     "status, execution, llm_explanation, execution_messages, forecast_snapshot, decided_at")
+                     "status, execution, llm_explanation, execution_messages, forecast_snapshot, decided_at, "
+                     "withdrawn_at")
+FINGERPRINT_KEY = "option_fingerprint"  # key inside the ``forecast_snapshot`` document
+_DECISION_LOCK_KEY = 2026_0001  # pg_advisory_xact_lock key shared by all backend instances
 
 
 def open_connection() -> psycopg.Connection:
@@ -107,11 +122,33 @@ class PostgresRepository:
             cur.execute(f"SELECT {_DECISION_COLUMNS} FROM owner_decisions ORDER BY decided_at DESC, id DESC")
             return [_decision_from_row(row) for row in cur.fetchall()]
 
-    def rejected_option_ids(self, as_of: date) -> frozenset[str]:
+    def rejected_option_fingerprints(self) -> frozenset[str]:
         with self._connection.cursor() as cur:
-            cur.execute("SELECT DISTINCT option_id FROM owner_decisions WHERE as_of_date = %s AND status = %s",
-                        (as_of, DecisionStatus.REJECTED.value))
-            return frozenset(row[0] for row in cur.fetchall())
+            cur.execute(
+                """
+                SELECT DISTINCT ON (fingerprint) fingerprint, status
+                FROM (SELECT forecast_snapshot ->> %s AS fingerprint, status, decided_at, id
+                      FROM owner_decisions) AS decisions
+                WHERE fingerprint IS NOT NULL
+                ORDER BY fingerprint, decided_at DESC, id DESC
+                """,
+                (FINGERPRINT_KEY,),
+            )
+            return frozenset(fingerprint for fingerprint, status in cur.fetchall()
+                             if status == DecisionStatus.REJECTED.value)
+
+    @contextmanager
+    def decision_lock(self) -> Iterator[None]:
+        """One transaction holding an advisory lock: concurrent decisions wait and then see each other's writes."""
+        with self._connection.transaction():
+            self._connection.execute("SELECT pg_advisory_xact_lock(%s)", (_DECISION_LOCK_KEY,))
+            yield
+
+    def withdraw_decision(self, decision_id: int, note: str) -> None:
+        with self._connection.transaction(), self._connection.cursor() as cur:
+            cur.execute("DELETE FROM planned_events WHERE decision_id = %s", (decision_id,))
+            cur.execute("UPDATE owner_decisions SET execution_messages = execution_messages || %s, withdrawn_at = now() "
+                        "WHERE id = %s", (Jsonb([note]), decision_id))
 
     def record_decision(self, decision: NewDecision, events_to_add: Sequence[EventDraft],
                         event_updates: Sequence[EventUpdate]) -> DecisionRecord:
@@ -202,15 +239,19 @@ def _decision_from_row(row: dict) -> DecisionRecord:
         execution_messages=tuple(row["execution_messages"]),
         decided_at=row["decided_at"],
         snapshot=snapshot_from_json(row["forecast_snapshot"]),
+        withdrawn_at=row["withdrawn_at"],
     )
 
 
 def snapshot_from_json(document: dict) -> DecisionSnapshot:
     """Read the summary part of a stored ``forecast_snapshot`` document."""
+    credit_limit_after = document.get("credit_limit_after_eur")  # absent in decisions recorded before it existed
     return DecisionSnapshot(
         status_before=RiskStatus(document["status_before"]),
         min_balance_before_eur=to_decimal(document["min_balance_before_eur"]),
         min_balance_date_before=date.fromisoformat(document["min_balance_date_before"]),
         status_after=RiskStatus(document["status_after"]),
         min_balance_after_eur=to_decimal(document["min_balance_after_eur"]),
+        credit_limit_after_eur=None if credit_limit_after is None else to_decimal(credit_limit_after),
+        cost_eur=to_decimal(document["cost_eur"]),
     )

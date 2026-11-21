@@ -19,7 +19,7 @@ kpi_engine/
 ## Prerequisites
 
 ```bash
-pip install -r backend/requirements.txt          # psycopg[binary]
+pip install -r backend/requirements-dev.txt      # backend dependencies (the engine itself needs only psycopg) + pytest
 # DB tables + reference data (idempotent, additive):
 psql "$DATABASE_URL" -f db/schema.sql -f db/kpi_reference_data.sql
 ```
@@ -42,15 +42,23 @@ python -m kpi_engine --as-of-date 2025-06-30 --dry-run  # compute only
 python -m kpi_engine --as-of-date 2025-01-01 --to-date 2025-12-31   # daily backfill (dashboard history)
 ```
 
-Re-running a date updates the existing row (same `id`, so `agent_proposals.snapshot_id` stays valid).
+Re-running a date updates the existing row (same `id`).
 
-## Backend integration
+## How the product uses the engine
+
+The liquidity agent's backend (`backend/*.py`) does **not** call `run_kpi_engine`. Its 60-day forecast, risk
+status and rescue options are computed by `ledger.py`, `forecast.py`, `risk.py` and `options.py`
+(ROZWIAZANIE.md §6-§10). It reuses only the engine's building blocks: `kpi_engine.repository` (loading
+transactions and balance anchors), `kpi_engine.models`, `kpi_engine.money` and `kpi_engine.fx`.
+
+The engine itself is run from the CLI above to fill `kpi_snapshots`, which the MCP server's analyst tools
+(`get_kpi_snapshot`, `get_kpi_history`) read. The same entry point is available from Python:
 
 ```python
 from kpi_engine import run_kpi_engine, KpiEngineError
 
 result = run_kpi_engine(as_of_date)            # "YYYY-MM-DD" or datetime.date
-result["snapshot_id"]                          # kpi_snapshots.id  → agent_proposals.snapshot_id
+result["snapshot_id"]                          # kpi_snapshots.id
 result["created"]                              # False if the day was recalculated
 metrics = result["metrics"]                    # same JSON as stored in kpi_snapshots.metrics
 metrics["signals"]["scenario_hint"]            # LIQUIDITY_SHORTAGE | EXCESS_LIQUIDITY | OPTIMAL
@@ -60,11 +68,7 @@ metrics["data_quality"]["status"]              # OK | DEGRADED | UNRELIABLE
 Pass `connection=<psycopg connection>` to reuse an existing connection/transaction (the caller then
 commits). `KpiEngineError` is raised for invalid dates or DB/configuration problems.
 
-For the AI agent, the useful inputs are `kpis` (numbers), `kpi_metadata[].status`, `signals`
-(scenario facts) and `data_quality.flags` (what is estimated or missing). The agent should never
-recompute from transactions (SPEC.md §5.1).
-
-The OpenShift backend deployment gets `PG*` variables from the `amalfi-db` secret (`deploy/backend.yaml`).
+A snapshot's 30-day outlook ignores planned events, so it is not the forecast shown to the owner.
 
 ## Tests
 

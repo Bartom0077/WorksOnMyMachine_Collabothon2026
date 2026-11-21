@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { approvedDecision, chatProposal, greenDashboard } from "../fixtures/data";
+import { approvedDecision, chatProposal, chatRemovalProposal, chatRemoved, greenDashboard } from "../fixtures/data";
 import { mockApi } from "../fixtures/mockApi";
 
 /** Design-review screenshots; only produced when SCREENSHOT_DIR is set. */
@@ -37,6 +37,25 @@ test.describe("screenshots", () => {
       await page.goto("/");
       await expect(page.getByText("No action needed")).toBeVisible();
       await page.screenshot({ path: join(directory, `green-${viewport.name}.png`), fullPage: true });
+    });
+
+    test(`chat removal card at ${viewport.name}`, async ({ page }) => {
+      const directory = outputDir ?? "";
+      mkdirSync(directory, { recursive: true });
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+
+      await mockApi(page, { chatQueue: [chatRemovalProposal, chatRemoved] });
+      await page.goto("/");
+      const chat = page.getByRole("complementary", { name: "Assistant" });
+      await page.getByLabel("Message to the assistant").fill("Please remove the oven purchase");
+      await page.getByLabel("Message to the assistant").press("Enter");
+      const removal = chat.getByRole("group", { name: "Plan awaiting removal" });
+      await expect(removal).toBeVisible();
+      await chat.screenshot({ path: join(directory, `removal-card-${viewport.name}.png`) });
+
+      await removal.getByRole("button", { name: "Yes, remove it" }).click();
+      await expect(chat.getByText("Removed from your plans: New pizza oven")).toBeVisible();
+      await chat.screenshot({ path: join(directory, `removal-done-${viewport.name}.png`) });
     });
   }
 });

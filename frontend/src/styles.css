@@ -438,6 +438,7 @@ textarea {
 }
 
 .badge--rejected,
+.badge--withdrawn,
 .badge--fallback,
 .badge--source-agent {
   background: #e9eef0;
@@ -891,17 +892,14 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-.option__comment {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  font-size: 0.88rem;
-  color: #33295f;
+.option__note {
+  display: block;
+  font-size: 0.82rem;
 }
 
-.option__comment .icon {
-  margin-top: 3px;
-  color: var(--violet);
+.option__comment {
+  font-size: 0.88rem;
+  color: var(--muted);
 }
 
 .option__actions {
@@ -1256,6 +1254,10 @@ textarea {
   margin-top: 8px;
 }
 
+.confirmation__title {
+  font-weight: 700;
+  font-size: 0.88rem;
+}
 .confirmation__actions {
   display: flex;
   flex-wrap: wrap;
@@ -1270,6 +1272,11 @@ textarea {
   background: #fffbee;
 }
 
+.draft--removal {
+  border-color: #f3c6c2;
+  border-left-color: var(--red);
+  background: var(--red-bg);
+}
 .draft__type {
   font-weight: 700;
   margin-bottom: 4px;
@@ -1363,9 +1370,21 @@ textarea {
 
 .chat__form {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px;
   padding: 10px 12px 12px;
+}
+
+.chat__hint {
+  flex-basis: 100%;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* Only useful when the chat sits below the forecast (single-column layout). */
+.chat__back {
+  display: none;
 }
 
 .chat__input {
@@ -1459,6 +1478,21 @@ textarea {
     max-height: 420px;
   }
 
+  .chat__back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding: 6px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 999px;
+    color: #fff;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
   .assistant-link {
     display: inline-flex;
     align-items: center;
@@ -1474,6 +1508,19 @@ textarea {
 }
 
 @media (max-width: 600px) {
+  /* The plan's action moves under its text, so the description keeps the full width. */
+  .plan {
+    flex-wrap: wrap;
+  }
+
+  .plan__body {
+    flex-basis: calc(100% - 48px);
+  }
+
+  .plan > .btn {
+    margin-left: 48px;
+  }
+
   .topbar__inner,
   .layout {
     padding-left: 12px;

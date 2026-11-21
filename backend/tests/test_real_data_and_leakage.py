@@ -59,7 +59,7 @@ def test_daily_balance_changes_equal_daily_net_flow(statement, obligations, anch
         day += timedelta(days=1)
 
 
-# --------------------------------------------------------------------------- demo dates (SPEC.md DoD)
+# --------------------------------------------------------------------------- demo dates (ROZWIAZANIE.md §15)
 
 def test_demo_2025_06_30_liquidity_shortage(statement, obligations, anchors):
     m = compute(date(2025, 6, 30), statement, obligations, anchors)

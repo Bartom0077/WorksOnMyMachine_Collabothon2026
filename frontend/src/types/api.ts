@@ -129,6 +129,8 @@ export interface DecisionSnapshot {
   min_balance_date_before: string;
   status_after: RiskStatus;
   min_balance_after_eur: number;
+  /** The credit line the chosen option relies on, if any. */
+  credit_limit_after_eur: number | null;
 }
 
 export interface Decision {
@@ -144,6 +146,8 @@ export interface Decision {
   llm_explanation: string | null;
   execution_messages: string[];
   decided_at: string;
+  /** Set when the owner later withdrew an approved option; its measures are no longer in the forecast. */
+  withdrawn_at: string | null;
   snapshot: DecisionSnapshot;
 }
 
@@ -195,6 +199,10 @@ export interface ChatResponse {
   reply: string;
   pending_events: EventDraft[];
   saved_events: PlannedEvent[];
+  /** Saved plans the assistant asks the owner to confirm for removal; nothing is removed yet. */
+  pending_removals: PlannedEvent[];
+  /** Plans removed in this turn. */
+  removed_events: PlannedEvent[];
   tool_calls: ToolCall[];
   events_changed: boolean;
 }

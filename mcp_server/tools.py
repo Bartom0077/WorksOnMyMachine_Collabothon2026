@@ -1,7 +1,8 @@
 """Data tools exposed to the LLM. Pure functions of (connection, cutoff, arguments) -> JSON-able dict.
 
 Rules (ROZWIAZANIE.md section 11, KPI_SPEC.md):
-* KPIs come only from ``kpi_snapshots`` (deterministic engine); nothing here recomputes them.
+* Nothing here computes balances or forecasts. The forecast the owner sees is computed by the backend and
+  handed to the model in the prompt; KPI values are only read from ``kpi_snapshots`` (deterministic engine).
 * Every read is capped at the as-of ``cutoff`` so the agent never sees future data.
 * Only whitelisted tables/columns, parameterised SQL, bounded result sizes.
 """
@@ -36,7 +37,7 @@ TRANSACTION_TYPE_CLASSES = {
 }
 
 RAW_AMOUNTS_NOTE = ("Amounts are in the original transaction currency (non-EUR rows are NOT converted). "
-                    "For KPIs and balances use get_kpi_snapshot — those numbers are authoritative.")
+                    "Do not derive balances or forecasts from these sums.")
 
 
 def _cashflow_class_sql() -> sql.Composable:
@@ -121,7 +122,7 @@ def get_data_overview(conn: psycopg.Connection, cutoff: Optional[date]) -> dict:
         "transaction_types": types,
         "kpi_snapshots": snaps,
         "fixed_obligations": obligations,
-        "hint": "Start with get_kpi_snapshot for the analysis date; use history/transactions to explain causes.",
+        "hint": "get_kpi_snapshot describes the analysis date; history and transactions explain causes.",
     }
 
 
@@ -302,8 +303,7 @@ def get_fixed_obligations(conn: psycopg.Connection, cutoff: Optional[date], acti
             r["documented_period_ended"] = bool(r["valid_to"] and r["valid_to"] < day.isoformat())
     notes = ["payment_months is 'all' or a ';'-separated list of months (e.g. '03;06;09;12'). valid_to is the end "
              "of the documented period; recurring costs are assumed to continue after it unless total_commitment "
-             "is set. Projected due dates and amounts for the next 30 days are in "
-             "get_kpi_snapshot(include_forecast=true)."]
+             "is set."]
     if day:
         notes.insert(0, f"Obligations started on or before {day.isoformat()}.")
     return {**_meta(cutoff, notes), "obligations": rows}

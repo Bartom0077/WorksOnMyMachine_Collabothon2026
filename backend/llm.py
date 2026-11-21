@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Mapping, Optional, Protocol
+from typing import Any, Callable, Mapping, Optional, Protocol
+from urllib.parse import quote
 
 import httpx
 
@@ -63,12 +65,15 @@ class LlmProtocolError(LlmError):
 class McpAccess:
     """The MCP server offered to the model for one request, limited to the tools that request needs.
 
-    Every listed tool schema costs context tokens (all nine tools take about a third of the window).
+    Every listed tool schema costs context tokens (all eleven tools take about a third of the window).
+    ``removable_event_ids`` are the saved plans the owner has been shown for removal: the MCP server refuses
+    to remove any other plan in this request.
     """
 
     server_url: str
     as_of_date: date
     allowed_tools: tuple[str, ...]
+    removable_event_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -117,10 +122,30 @@ class LlmResponse:
     truncated: bool  # the answer hit max_output_tokens
 
 
-class LlmClient(Protocol):
-    def respond(self, request: LlmRequest) -> LlmResponse: ...
+class Deadline:
+    """Time budget of one unit of work that makes several model calls; each call gets what is left of it."""
 
-    def get_response(self, response_id: str) -> LlmResponse: ...
+    def __init__(self, budget_seconds: float, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._ends_at = clock() + budget_seconds
+
+    def remaining(self) -> float:
+        return self._ends_at - self._clock()
+
+    def timeout(self, cap_seconds: float) -> float:
+        """Timeout for the next call: the cap or the rest of the budget, whichever is smaller."""
+        remaining = self.remaining()
+        if remaining <= 0:
+            raise LlmTimeoutError("The time budget for this request is used up.")
+        return min(cap_seconds, remaining)
+
+
+class LlmClient(Protocol):
+    """``timeout_seconds`` overrides the client's default read timeout for one call."""
+
+    def respond(self, request: LlmRequest, timeout_seconds: Optional[float] = None) -> LlmResponse: ...
+
+    def get_response(self, response_id: str, timeout_seconds: Optional[float] = None) -> LlmResponse: ...
 
 
 class OgxClient:
@@ -130,14 +155,17 @@ class OgxClient:
         self._http = http
         self._model = model
 
-    def respond(self, request: LlmRequest) -> LlmResponse:
-        return parse_response(self._send("POST", "/v1/responses", build_payload(self._model, request)))
+    def respond(self, request: LlmRequest, timeout_seconds: Optional[float] = None) -> LlmResponse:
+        payload = build_payload(self._model, request)
+        return parse_response(self._send("POST", "/v1/responses", payload, timeout_seconds))
 
-    def get_response(self, response_id: str) -> LlmResponse:
-        return parse_response(self._send("GET", f"/v1/responses/{response_id}", None))
+    def get_response(self, response_id: str, timeout_seconds: Optional[float] = None) -> LlmResponse:
+        # The id comes from the browser: quoted, so it can never address another OGX path or add a query string.
+        path = f"/v1/responses/{quote(response_id, safe='')}"
+        return parse_response(self._send("GET", path, None, timeout_seconds))
 
-    def _send(self, method: str, path: str, payload: Optional[dict]) -> Any:
-        response = self._request_with_retry(method, path, payload)
+    def _send(self, method: str, path: str, payload: Optional[dict], timeout_seconds: Optional[float]) -> Any:
+        response = self._request_with_retry(method, path, payload, timeout_seconds)
         if response.status_code >= 400:
             raise _http_error(response)
         try:
@@ -145,12 +173,16 @@ class OgxClient:
         except ValueError as exc:
             raise LlmProtocolError("OGX returned a body that is not JSON.") from exc
 
-    def _request_with_retry(self, method: str, path: str, payload: Optional[dict]) -> httpx.Response:
+    def _request_with_retry(self, method: str, path: str, payload: Optional[dict],
+                            timeout_seconds: Optional[float]) -> httpx.Response:
         """One retry for a dropped or refused connection (a stale keep-alive, an OGX restart). Timeouts are not
-        retried. Repeating a request is safe: the only write the model can make, save_planned_event, is idempotent."""
+        retried. Repeating a request is safe: the writes the model can make are idempotent (save_planned_event does
+        not insert a plan twice and answers "already_saved"; remove_planned_event answers "already_removed" for a
+        confirmed plan that is gone, which the chat reports to the owner as removed)."""
+        timeout = self._http.timeout if timeout_seconds is None else self._timeout(timeout_seconds)
         for attempt in range(_CONNECTION_ATTEMPTS):
             try:
-                return self._http.request(method, path, json=payload)
+                return self._http.request(method, path, json=payload, timeout=timeout)
             except httpx.TimeoutException as exc:
                 raise LlmTimeoutError(f"OGX did not answer in time: {exc!r}") from exc
             except httpx.TransportError as exc:
@@ -158,6 +190,10 @@ class OgxClient:
                     raise LlmUnreachableError(f"OGX is unreachable: {exc!r}") from exc
                 logger.warning("Connection to OGX failed (%r); retrying once.", exc)
         raise AssertionError("unreachable: the loop returns or raises")
+
+    def _timeout(self, seconds: float) -> httpx.Timeout:
+        connect = self._http.timeout.connect
+        return httpx.Timeout(seconds, connect=seconds if connect is None else min(seconds, connect))
 
 
 def create_http_client(base_url: str, timeout_seconds: float, connect_timeout_seconds: float) -> httpx.Client:
@@ -204,10 +240,17 @@ def _mcp_tool(access: McpAccess) -> dict:
         "type": "mcp",
         "server_label": MCP_SERVER_LABEL,
         "server_url": access.server_url,
-        "headers": {"X-As-Of-Date": access.as_of_date.isoformat()},
+        "headers": _mcp_headers(access),
         "require_approval": "never",
         "allowed_tools": list(access.allowed_tools),
     }
+
+
+def _mcp_headers(access: McpAccess) -> dict[str, str]:
+    headers = {"X-As-Of-Date": access.as_of_date.isoformat()}
+    if access.removable_event_ids:
+        headers["X-Removable-Event-Ids"] = ",".join(str(event_id) for event_id in access.removable_event_ids)
+    return headers
 
 
 def _message_texts(item: dict) -> list[str]:

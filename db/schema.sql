@@ -1,4 +1,4 @@
--- Autonomous CFO — schema for database "amalfi" (SPEC.md §3)
+-- Autonomous CFO — schema for database "amalfi" (ROZWIAZANIE.md §5, KPI_SPEC.md §2)
 -- Idempotent: safe to run multiple times.
 
 CREATE TABLE IF NOT EXISTS bank_transactions (
@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS kpi_snapshots (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Legacy: proposal table of the first design. No application code reads or writes it (owner decisions are in
+-- owner_decisions below); it is kept only because backend/tests/test_integration_db.py uses it to prove that
+-- a re-run of the KPI engine keeps kpi_snapshots.id stable.
 CREATE TABLE IF NOT EXISTS agent_proposals (
     id SERIAL PRIMARY KEY,
     snapshot_id INTEGER REFERENCES kpi_snapshots(id) ON DELETE CASCADE,
@@ -100,24 +103,47 @@ CREATE TABLE IF NOT EXISTS owner_decisions (
     llm_explanation TEXT,
     execution_messages JSONB NOT NULL DEFAULT '[]'::jsonb,
     forecast_snapshot JSONB NOT NULL,             -- risk + forecast at the moment of the decision
-    decided_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    withdrawn_at TIMESTAMPTZ                      -- set when the owner later withdrew an approved option
 );
+ALTER TABLE owner_decisions ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ;
 
 -- Future plans: described by the owner in chat (source 'chat') or created from an approved option ('agent').
+-- Chat events are written by the MCP server, so the database itself limits them to what the owner may plan
+-- in the chat (ROZWIAZANIE.md §8.2/§8.3): closure, expense or inflow, never tied to a category or a decision.
+-- db/setup_mcp_user.sh adds row level security so that the MCP role can insert only source = 'chat'.
 CREATE TABLE IF NOT EXISTS planned_events (
     id SERIAL PRIMARY KEY,
     event_type VARCHAR(30) NOT NULL
         CHECK (event_type IN ('closure', 'expense', 'inflow', 'payment_deferral', 'credit_line')),
+    -- closure: first and last closed day. expense / inflow: date_to = date_from. credit_line: valid from..to.
+    -- payment_deferral: ONE row per postponed payment; date_from = original due date, date_to = new due date.
     date_from DATE NOT NULL,
-    date_to DATE NOT NULL CHECK (date_to >= date_from),   -- single-day events: date_to = date_from
-    amount_eur NUMERIC(12, 2) CHECK (amount_eur > 0),      -- NULL for closure and payment_deferral
+    date_to DATE NOT NULL CHECK (date_to >= date_from),
+    amount_eur NUMERIC(12, 2) CHECK (amount_eur > 0),      -- NULL for closure; payment_deferral: the payment
     category VARCHAR(50),                                  -- payment_deferral only (e.g. investment_outflow)
     description TEXT NOT NULL,
     original_utterance TEXT,                               -- owner's chat message (audit trail)
     source VARCHAR(10) NOT NULL CHECK (source IN ('chat', 'agent')),
     as_of_date DATE NOT NULL,                              -- simulated "today" when the event was saved
     decision_id INTEGER REFERENCES owner_decisions(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT planned_events_chat_scope CHECK (
+        source <> 'chat'
+        OR (event_type IN ('closure', 'expense', 'inflow') AND category IS NULL AND decision_id IS NULL))
 );
+
+-- Databases created before the constraint existed: add it without re-checking old rows.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_constraint
+                   WHERE conname = 'planned_events_chat_scope' AND conrelid = 'planned_events'::regclass) THEN
+        ALTER TABLE planned_events ADD CONSTRAINT planned_events_chat_scope CHECK (
+            source <> 'chat'
+            OR (event_type IN ('closure', 'expense', 'inflow') AND category IS NULL AND decision_id IS NULL))
+            NOT VALID;
+    END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS idx_planned_events_dates ON planned_events (date_from, date_to);
