@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import {
   CartesianGrid,
   Line,
@@ -11,15 +11,15 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { type ChartRow, buildChartModel } from "../lib/chartModel";
+import { type ChartPreview, type ChartRow, buildChartModel } from "../lib/chartModel";
 import { dateToTime, formatDate, formatEur, formatEurCompact, formatEurWhole, formatTime } from "../lib/format";
-import type { Dashboard, ForecastDay, RescueOption } from "../types/api";
+import type { Dashboard, ForecastDay } from "../types/api";
 
 const COLORS = {
   // Validated as a categorical trio (colour-vision-deficiency separation and contrast on white).
   history: "#0a6c94",
   baseline: "#a81e1e",
-  option: "#22a05c",
+  preview: "#22a05c",
   axis: "#516870",
   grid: "#e3eaec",
   zero: "#0b2a33",
@@ -31,26 +31,30 @@ const COLORS = {
   surface: "#ffffff",
 };
 const BASELINE_DASH = "7 5";
-const OPTION_DASH = "2 4";
+const PREVIEW_DASH = "2 4";
+/** A surface-coloured outline that keeps a point label readable where a line runs through it. */
+const LABEL_HALO = { stroke: COLORS.surface, strokeWidth: 3, paintOrder: "stroke" };
 const MAX_TOOLTIP_ITEMS = 4;
 
 interface Props {
   dashboard: Dashboard;
-  previewOption: RescueOption | null;
+  /** The scenario drawn next to the baseline: a rescue option or CFO recommendations. */
+  preview: ChartPreview | null;
 }
 
 interface TooltipCardProps {
   row: ChartRow;
   baselineLabel: string;
   day: ForecastDay | undefined;
-  optionId: string | null;
+  /** Column label of the previewed scenario, e.g. "With option E". */
+  previewLabel: string | null;
 }
 
 function largestItems(day: ForecastDay) {
   return [...day.items].sort((a, b) => Math.abs(b.amount_eur) - Math.abs(a.amount_eur)).slice(0, MAX_TOOLTIP_ITEMS);
 }
 
-function TooltipCard({ row, baselineLabel, day, optionId }: TooltipCardProps) {
+function TooltipCard({ row, baselineLabel, day, previewLabel }: TooltipCardProps) {
   const isForecast = row.history === undefined;
   return (
     <div className="chart-tooltip">
@@ -68,10 +72,10 @@ function TooltipCard({ row, baselineLabel, day, optionId }: TooltipCardProps) {
             <dd>{formatEur(row.baseline)}</dd>
           </div>
         ) : null}
-        {isForecast && row.option !== undefined && optionId !== null ? (
+        {isForecast && row.preview !== undefined && previewLabel !== null ? (
           <div>
-            <dt>With option {optionId}</dt>
-            <dd>{formatEur(row.option)}</dd>
+            <dt>{previewLabel}</dt>
+            <dd>{formatEur(row.preview)}</dd>
           </div>
         ) : null}
       </dl>
@@ -108,7 +112,7 @@ function needsAction(dashboard: Dashboard): boolean {
   return dashboard.options.length > 0;
 }
 
-function describeChart(dashboard: Dashboard, previewOption: RescueOption | null): string {
+function describeChart(dashboard: Dashboard, preview: ChartPreview | null): string {
   const { risk } = dashboard;
   const forecastSubject = needsAction(dashboard) ? "If you do nothing, the forecast" : "The forecast";
   const parts = [
@@ -116,27 +120,28 @@ function describeChart(dashboard: Dashboard, previewOption: RescueOption | null)
     `${forecastSubject} for the next ${dashboard.horizon_days} days reaches its lowest point of ` +
       `${formatEur(risk.min_balance_eur)} on ${formatDate(risk.min_balance_date)}.`,
   ];
-  if (previewOption !== null) {
+  if (preview !== null) {
     parts.push(
-      `With option ${previewOption.id} (${previewOption.title}) the lowest point is ` +
-        `${formatEur(previewOption.new_min_balance_eur)} on ${formatDate(previewOption.new_min_balance_date)}.`,
+      `With ${preview.name} (${preview.title}) the lowest point is ` +
+        `${formatEur(preview.minBalanceEur)} on ${formatDate(preview.minBalanceDate)}.`,
     );
   }
   return parts.join(" ");
 }
 
-/** Balance history and forecast lines with event overlays, plus a table alternative. */
-export default function BalanceChart({ dashboard, previewOption }: Props) {
-  const model = useMemo(() => buildChartModel(dashboard, previewOption), [dashboard, previewOption]);
+/** Balance history and forecast lines with event overlays; the prose summary and a table sit behind a disclosure. */
+export default function BalanceChart({ dashboard, preview }: Props) {
+  const model = useMemo(() => buildChartModel(dashboard, preview), [dashboard, preview]);
   const rowsByTime = useMemo(() => new Map(model.rows.map((row) => [row.time, row])), [model.rows]);
   const daysByDate = useMemo(
     () => new Map(dashboard.forecast.days.map((day) => [day.date, day])),
     [dashboard.forecast.days],
   );
-  const optionByDate = useMemo(
-    () => new Map(previewOption?.forecast.map((point) => [point.date, point.balance_eur])),
-    [previewOption],
+  const previewByDate = useMemo(
+    () => new Map(preview?.forecast.map((point) => [point.date, point.balance_eur])),
+    [preview],
   );
+  const previewLabel = preview !== null ? `With ${preview.name}` : null;
 
   const { risk } = dashboard;
   const bufferLevel = risk.floor_eur + dashboard.buffer_eur;
@@ -144,8 +149,9 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
   const lastTime = model.rows[model.rows.length - 1]?.time ?? minTime;
   const firstTime = model.rows[0]?.time ?? minTime;
   const minLabelSide = minTime > firstTime + (lastTime - firstTime) * 0.8 ? "left" : "right";
-  const optionCreditLimit = previewOption?.credit_limit_eur ?? null;
-  const summary = describeChart(dashboard, previewOption);
+  const previewCreditLimit = preview?.creditLimitEur ?? null;
+  const summary = describeChart(dashboard, preview);
+  const summaryId = useId();
   // A healthy forecast simply continues the history colour; red is reserved for a forecast that needs attention.
   const baselineColor = risk.status === "GREEN" ? COLORS.history : COLORS.baseline;
   const baselineLabel = needsAction(dashboard) ? "If you do nothing" : "Forecast";
@@ -155,8 +161,9 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
   const bufferLabel = hasCreditLine
     ? `Safety buffer (${formatEurWhole(dashboard.buffer_eur)} above the credit limit)`
     : "Safety buffer";
-  // Labels sit above their line, away from the busiest part of the plot: without a credit line the buffer is
-  // near the history line (left), with one it is near the forecast's low point (right).
+  // The buffer label sits above its line, away from the busiest part of the plot: without a credit line the
+  // buffer is near the history line (left), with one it is near the forecast's low point (right). A credit
+  // limit is labelled below its line, so the two cannot collide when the buffer sits just above the limit.
   const bufferLabelPosition = hasCreditLine ? "insideBottomLeft" : "insideBottomRight";
 
   return (
@@ -165,30 +172,26 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
         <h2 id="chart-title" className="card__title">
           Balance: past {dashboard.history.length} days and next {dashboard.horizon_days} days
         </h2>
+        <ul className="legend" aria-label="Chart legend">
+          <LegendItem color={COLORS.history} label="Past balance" />
+          <LegendItem color={baselineColor} dash={BASELINE_DASH} label={baselineLegend} />
+          {preview !== null ? (
+            <LegendItem color={COLORS.preview} dash={PREVIEW_DASH} label={`Forecast with ${preview.name}`} />
+          ) : null}
+          {model.closures.length > 0 ? (
+            <li>
+              <span className="legend__band" aria-hidden="true" />
+              Closed
+            </li>
+          ) : null}
+        </ul>
       </div>
 
-      <ul className="legend" aria-label="Chart legend">
-        <LegendItem color={COLORS.history} label="Past balance" />
-        <LegendItem color={baselineColor} dash={BASELINE_DASH} label={baselineLegend} />
-        {previewOption !== null ? (
-          <LegendItem
-            color={COLORS.option}
-            dash={OPTION_DASH}
-            label={`Forecast with option ${previewOption.id}: ${previewOption.title}`}
-          />
-        ) : null}
-        {model.closures.length > 0 ? (
-          <li>
-            <span className="legend__band" aria-hidden="true" />
-            Closed
-          </li>
-        ) : null}
-      </ul>
-
-      <figure className="chart">
+      {/* The description lives in the collapsed disclosure below; referencing it keeps it announced with the chart. */}
+      <figure className="chart" aria-describedby={summaryId}>
         <div className="chart__plot">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={model.rows} margin={{ top: 24, right: 16, bottom: 4, left: 0 }} accessibilityLayer>
+            <LineChart data={model.rows} margin={{ top: 20, right: 16, bottom: 0, left: 0 }} accessibilityLayer>
               <CartesianGrid vertical={false} stroke={COLORS.grid} />
               <XAxis
                 dataKey="time"
@@ -239,18 +242,18 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                   stroke={COLORS.credit}
                   strokeDasharray="8 3 2 3"
                  
-                  label={{ value: "Credit limit", position: "insideBottomLeft", fill: COLORS.credit, fontSize: 12 }}
+                  label={{ value: "Credit limit", position: "insideTopLeft", fill: COLORS.credit, fontSize: 12 }}
                 />
               ) : null}
-              {optionCreditLimit !== null ? (
+              {previewCreditLimit !== null ? (
                 <ReferenceLine
-                  y={-optionCreditLimit}
+                  y={-previewCreditLimit}
                   stroke={COLORS.credit}
                   strokeDasharray="8 3 2 3"
                  
                   label={{
-                    value: `Credit limit with option ${previewOption?.id ?? ""}`,
-                    position: "insideBottomLeft",
+                    value: `Credit limit with ${preview?.name ?? ""}`,
+                    position: "insideTopLeft",
                     fill: COLORS.credit,
                     fontSize: 12,
                   }}
@@ -274,7 +277,7 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                       row={row}
                       baselineLabel={baselineLabel}
                       day={daysByDate.get(row.date)}
-                      optionId={previewOption?.id ?? null}
+                      previewLabel={previewLabel}
                     />
                   );
                 }}
@@ -299,13 +302,13 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                 activeDot={{ r: 4, stroke: COLORS.surface, strokeWidth: 2 }}
                 isAnimationActive={false}
               />
-              {previewOption !== null ? (
+              {preview !== null ? (
                 <Line
-                  dataKey="option"
-                  name={`Forecast with option ${previewOption.id}`}
-                  stroke={COLORS.option}
+                  dataKey="preview"
+                  name={`Forecast with ${preview.name}`}
+                  stroke={COLORS.preview}
                   strokeWidth={2.5}
-                  strokeDasharray={OPTION_DASH}
+                  strokeDasharray={PREVIEW_DASH}
                   strokeLinecap="round"
                   dot={false}
                   activeDot={{ r: 4, stroke: COLORS.surface, strokeWidth: 2 }}
@@ -327,6 +330,7 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                     position: "top",
                     fill: COLORS.zero,
                     fontSize: 12,
+                    ...LABEL_HALO,
                   }}
                 />
               ))}
@@ -343,21 +347,24 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                   fill: COLORS.zero,
                   fontSize: 12,
                   fontWeight: 600,
+                  ...LABEL_HALO,
                 }}
               />
             </LineChart>
           </ResponsiveContainer>
         </div>
-        <figcaption className="chart__caption">{summary}</figcaption>
       </figure>
-      <p className="muted">
-        Day-to-day revenue and running costs are estimated from your average over the last{" "}
-        {dashboard.forecast.daily_averages.lookback_days} days ({dashboard.forecast.daily_averages.open_days} of them
-        open); fixed payments and your plans are added on their due dates.
-      </p>
 
       <details className="disclosure">
-        <summary>Show the forecast as a table</summary>
+        <summary>Details and table</summary>
+        <p id={summaryId} className="muted">
+          {summary}
+        </p>
+        <p className="muted">
+          Day-to-day revenue and running costs are estimated from your average over the last{" "}
+          {dashboard.forecast.daily_averages.lookback_days} days ({dashboard.forecast.daily_averages.open_days} of
+          them open); fixed payments and your plans are added on their due dates.
+        </p>
         <div className="table-scroll" tabIndex={0} role="region" aria-label="Forecast table">
           <table className="table">
             <caption className="visually-hidden">Projected end-of-day balance per day</caption>
@@ -367,9 +374,9 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
                 <th scope="col" className="num">
                   {baselineLabel}
                 </th>
-                {previewOption !== null ? (
+                {previewLabel !== null ? (
                   <th scope="col" className="num">
-                    With option {previewOption.id}
+                    {previewLabel}
                   </th>
                 ) : null}
                 <th scope="col" className="num">
@@ -382,13 +389,13 @@ export default function BalanceChart({ dashboard, previewOption }: Props) {
             </thead>
             <tbody>
               {dashboard.forecast.days.map((day) => {
-                const optionBalance = optionByDate.get(day.date);
+                const previewBalance = previewByDate.get(day.date);
                 return (
                   <tr key={day.date}>
                     <th scope="row">{formatDate(day.date)}</th>
                     <td className="num">{formatEur(day.balance_eur)}</td>
-                    {previewOption !== null ? (
-                      <td className="num">{optionBalance === undefined ? "–" : formatEur(optionBalance)}</td>
+                    {preview !== null ? (
+                      <td className="num">{previewBalance === undefined ? "–" : formatEur(previewBalance)}</td>
                     ) : null}
                     <td className="num">{formatEur(day.inflow_eur)}</td>
                     <td className="num">{formatEur(day.outflow_eur)}</td>

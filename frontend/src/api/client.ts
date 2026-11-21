@@ -1,4 +1,8 @@
 import type {
+  AdviceDecisionRequest,
+  AdviceDecisionResponse,
+  AdviceRecommendation,
+  AdviceResponse,
   ApiErrorBody,
   ChatRequest,
   ChatResponse,
@@ -112,6 +116,15 @@ export const api = {
 
   postRecommendation: (params: ScenarioParams, signal?: AbortSignal) =>
     postJson<Recommendation>("/recommendation", params, signal),
+
+  getAdvice: (params: ScenarioParams, signal?: AbortSignal) =>
+    getJson<AdviceResponse>(`/advice?${scenarioQuery(params)}`, signal),
+
+  postAdviceRecommendation: (params: ScenarioParams, signal?: AbortSignal) =>
+    postJson<AdviceRecommendation>("/advice/recommendation", params, signal),
+
+  postAdviceDecisions: (request: AdviceDecisionRequest) =>
+    postJson<AdviceDecisionResponse>("/advice/decisions", request),
 
   postChat: (request: ChatRequest) => postJson<ChatResponse>("/chat", request),
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import type { AssistantPanel } from "../hooks/useAssistantPanel";
 import { useDebouncedCallback } from "../hooks/useDebouncedCallback";
 import { formatDateRange } from "../lib/format";
+import { ASSISTANT_PANEL_ID } from "../lib/layout";
 import type { Dashboard, HorizonDays, ScenarioParams } from "../types/api";
 import { Icon } from "./Icon";
 
@@ -18,6 +20,9 @@ interface Props {
   dataRange: DataRange | null;
   onChange: (patch: Partial<ScenarioParams>) => void;
   onResetDemo: () => void;
+  assistant: AssistantPanel;
+  /** What the closed assistant is waiting for or busy with ("needs your confirmation"); null when nothing is. */
+  assistantAttention: string | null;
 }
 
 function parseBuffer(text: string): number | null {
@@ -33,8 +38,8 @@ function isSelectableDate(text: string, dataRange: DataRange | null): boolean {
   return dataRange === null || (text >= dataRange.first_date && text <= dataRange.last_date);
 }
 
-/** Brand plus the three scenario controls: "today", forecast horizon and safety buffer. */
-export function TopBar({ params, dataRange, onChange, onResetDemo }: Props) {
+/** Brand, the three scenario controls ("today", forecast horizon, safety buffer) and the assistant toggle. */
+export function TopBar({ params, dataRange, onChange, onResetDemo, assistant, assistantAttention }: Props) {
   // Both typed fields keep a local draft: only a complete, valid value is passed on.
   const [dateText, setDateText] = useState(params.as_of_date);
   const [bufferText, setBufferText] = useState(String(params.buffer_eur));
@@ -62,7 +67,7 @@ export function TopBar({ params, dataRange, onChange, onResetDemo }: Props) {
           <span className="brand__mark" aria-hidden="true" />
           <div>
             <p className="brand__wordmark">Commerzbank</p>
-            <h1 className="brand__product">Autonomous CFO</h1>
+            <h1 className="brand__product">FinGuard</h1>
           </div>
         </div>
 
@@ -144,6 +149,23 @@ export function TopBar({ params, dataRange, onChange, onResetDemo }: Props) {
             Reset demo
           </button>
         </form>
+
+        <button
+          type="button"
+          ref={assistant.toggleRef}
+          className="assistant-toggle"
+          aria-expanded={assistant.open}
+          aria-controls={ASSISTANT_PANEL_ID}
+          onClick={assistant.toggle}
+        >
+          <Icon name="chat" size={18} />
+          Assistant
+          {assistantAttention !== null ? (
+            <span className="assistant-toggle__dot">
+              <span className="visually-hidden">{assistantAttention}</span>
+            </span>
+          ) : null}
+        </button>
       </div>
     </header>
   );

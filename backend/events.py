@@ -1,6 +1,7 @@
 """Module 3 — applying planned events to the forecast plan (ROZWIAZANIE.md §8.2).
 
 Each event type is one small function that edits the per-day plan *before* the running balance is computed.
+Besides the owner's plans this covers what the CFO advisors create: term deposits and currency purchases.
 """
 from __future__ import annotations
 
@@ -10,7 +11,12 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Callable, Iterator, Sequence
 
+from config import DAYS_PER_YEAR, TERM_DEPOSIT_INTEREST_RATE
 from domain import EventDraft, EventType, ForecastItem, ItemKind
+from kpi_engine.money import ZERO, cents
+from texts import format_day, format_eur
+
+ZURICH_TRANSFER_CATEGORY = "investment_outflow"  # the CHF instalments an ``fx_prebuy`` pays for in advance
 
 _VARIABLE_KINDS = (ItemKind.VARIABLE_REVENUE, ItemKind.VARIABLE_COST)
 
@@ -41,7 +47,9 @@ def apply_events(plan: Plan, events: Sequence[EventDraft]) -> None:
 
 
 def _event_order(event: EventDraft) -> tuple:
-    return event.date_from, event.date_to, event.event_type.value, event.description
+    """A currency purchase comes last: it removes instalments that other events (deferrals) put into the plan."""
+    return (event.event_type is EventType.FX_PREBUY, event.date_from, event.date_to, event.event_type.value,
+            event.description)
 
 
 def _days_in_range(plan: Plan, event: EventDraft) -> Iterator[DayPlan]:
@@ -90,10 +98,63 @@ def apply_credit_line(plan: Plan, event: EventDraft) -> None:
         day.floor_eur -= _required_amount(event)
 
 
+def term_deposit_interest(event: EventDraft) -> Decimal:
+    """Interest a term deposit earns from its opening to its maturity, derived from the event alone.
+
+    The one formula behind both the forecast and the texts of the advisors' proposals.
+    """
+    days = (event.date_to - event.date_from).days
+    return cents(_required_amount(event) * TERM_DEPOSIT_INTEREST_RATE * days / DAYS_PER_YEAR)
+
+
+def apply_term_deposit(plan: Plan, event: EventDraft) -> None:
+    """The principal leaves on the opening day and returns with interest at maturity (if within the horizon).
+
+    The deposit is simulated, so the booked balance never shows it: a deposit opened before the first forecast
+    day takes its principal out on that first day instead, which keeps the money tied up until maturity.
+    """
+    principal = _required_amount(event)
+    interest = term_deposit_interest(event)
+    first_day = min(plan)
+    if event.date_from < first_day <= event.date_to:
+        opened = f"{event.description} (opened on {format_day(event.date_from)}, money still tied up)"
+        _add_item(plan, first_day, event, opened, -principal)
+    else:
+        _add_item(plan, event.date_from, event, event.description, -principal)
+    _add_item(plan, event.date_to, event,
+              f"{event.description}: paid back with {format_eur(interest)} interest", principal + interest)
+
+
+def apply_fx_prebuy(plan: Plan, event: EventDraft) -> None:
+    """The CHF for the remaining Zurich instalments is bought at once: the instalments up to ``date_to`` leave
+    the plan (regular and postponed ones) and the purchase price leaves the account on the purchase day.
+
+    The purchase is simulated, so the booked balance never shows it: once the purchase day has passed, the
+    instalments still in the plan are the part of the price the balance does not show yet, and exactly that
+    sum is taken out on the first forecast day.
+    """
+    price = _required_amount(event)
+    still_planned = ZERO
+    for day in _days_in_range(plan, event):
+        covered = [item for item in day.items if item.category == ZURICH_TRANSFER_CATEGORY]
+        day.items = [item for item in day.items if item.category != ZURICH_TRANSFER_CATEGORY]
+        still_planned -= sum((item.amount_eur for item in covered), ZERO)
+    first_day = min(plan)
+    if event.date_from >= first_day:
+        _add_item(plan, event.date_from, event, event.description, -price)
+    elif still_planned > 0:
+        bought = f"{event.description} (bought on {format_day(event.date_from)}, not yet booked)"
+        _add_item(plan, first_day, event, bought, -still_planned)
+
+
 def _add_one_off(plan: Plan, event: EventDraft, signed_amount: Decimal) -> None:
-    day = plan.get(event.date_from)
+    _add_item(plan, event.date_from, event, event.description, signed_amount)
+
+
+def _add_item(plan: Plan, on: date, event: EventDraft, label: str, signed_amount: Decimal) -> None:
+    day = plan.get(on)
     if day is not None:
-        day.items.append(ForecastItem(event.description, event.event_type.value, ItemKind.EVENT, signed_amount))
+        day.items.append(ForecastItem(label, event.event_type.value, ItemKind.EVENT, signed_amount))
 
 
 def _required_amount(event: EventDraft) -> Decimal:
@@ -108,4 +169,6 @@ _APPLIERS: dict[EventType, Callable[[Plan, EventDraft], None]] = {
     EventType.INFLOW: apply_inflow,
     EventType.PAYMENT_DEFERRAL: apply_payment_deferral,
     EventType.CREDIT_LINE: apply_credit_line,
+    EventType.TERM_DEPOSIT: apply_term_deposit,
+    EventType.FX_PREBUY: apply_fx_prebuy,
 }

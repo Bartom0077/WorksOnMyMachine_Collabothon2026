@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { type Page, expect, test } from "@playwright/test";
 import {
   approvedDashboard,
   approvedDecision,
@@ -11,7 +11,27 @@ import {
   greenDashboard,
   redDashboard,
 } from "../fixtures/data";
+import { assistantPanel, openAssistant } from "../fixtures/assistant";
 import { apiError, mockApi } from "../fixtures/mockApi";
+
+type TabName = "Options" | "CFO advice" | "My plans" | "History";
+
+function workspaceTab(page: Page, name: TabName) {
+  return page.getByRole("tablist", { name: "Decisions and plans" }).getByRole("tab", { name });
+}
+
+/** Selects a workspace tab; only the panel of the selected tab is rendered. */
+async function openTab(page: Page, name: TabName) {
+  const tab = workspaceTab(page, name);
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+}
+
+/** Opens the "My plans" tab and returns its panel content. */
+async function openPlans(page: Page) {
+  await openTab(page, "My plans");
+  return page.getByRole("region", { name: "My plans" });
+}
 
 test.describe("assistant chat", () => {
   test("confirming a recognised plan saves it and refreshes the forecast", async ({ page }) => {
@@ -27,9 +47,15 @@ test.describe("assistant chat", () => {
       },
     });
     await page.goto("/");
+    await openAssistant(page);
     await expect(page.getByText("No action needed")).toBeVisible();
+    await expect(workspaceTab(page, "Options")).toHaveCount(0);
+    await expect(workspaceTab(page, "CFO advice")).toHaveAttribute("aria-selected", "true");
+    await expect(workspaceTab(page, "My plans")).toHaveText(/^My plans\s*0$/);
 
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
+    await expect(chat.getByText("I ask before saving anything.")).toBeVisible();
+    await expect(chat.getByText("Tell me a plan and I will show how it changes your forecast.")).toBeVisible();
     await chat.getByRole("button", { name: "We are closing for holidays from 1 to 21 June" }).click();
 
     const confirmation = chat.getByRole("group", { name: "Plan awaiting your confirmation" });
@@ -45,8 +71,12 @@ test.describe("assistant chat", () => {
     await expect(chat.getByText("Forecast updated with your plans.")).toBeVisible();
     await expect(chat.getByText("Added to your plans: Holiday closure")).toBeVisible();
     await expect(page.getByText("Status: Shortfall ahead")).toBeVisible();
+    // The new shortfall brings the Options tab, and the owner had not picked a tab, so it opens.
+    await expect(workspaceTab(page, "Options")).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("article")).toHaveCount(4);
-    await expect(page.getByRole("region", { name: "My plans" }).getByText("Holiday closure")).toBeVisible();
+    await expect(workspaceTab(page, "My plans")).toHaveText(/^My plans\s*1$/);
+    const plans = await openPlans(page);
+    await expect(plans.getByText("Holiday closure")).toBeVisible();
 
     expect(api.requests.chat).toHaveLength(2);
     expect(api.requests.chat[0]).toEqual({
@@ -68,6 +98,7 @@ test.describe("assistant chat", () => {
     const answer = { ...chatSaved, events_changed: false, saved_events: [] };
     const api = await mockApi(page, { chatQueue: [answer, answer], chatDelayMs: 1500 });
     await page.goto("/");
+    await openAssistant(page);
 
     const input = page.getByLabel("Message to the assistant");
     await input.fill("first message");
@@ -102,6 +133,7 @@ test.describe("assistant chat", () => {
       },
     });
     await page.goto("/");
+    await openAssistant(page);
     await expect(page.getByText("No action needed")).toBeVisible();
 
     await page.getByLabel("Message to the assistant").fill("Yes, please include it");
@@ -110,8 +142,9 @@ test.describe("assistant chat", () => {
     await page.getByLabel("Today").fill("2025-05-11");
     await expect(page.getByText("“Today” is now 11 May 2025. Started a new conversation.")).toBeVisible();
 
-    await expect(page.getByRole("region", { name: "My plans" }).getByText("Holiday closure")).toBeVisible();
     await expect(page.getByText("Status: Shortfall ahead")).toBeVisible();
+    const plans = await openPlans(page);
+    await expect(plans.getByText("Holiday closure")).toBeVisible();
     // The outdated reply itself is not shown in the new conversation.
     await expect(page.getByText("Added to your plans: Holiday closure")).toHaveCount(0);
     expect(api.requests.chat).toHaveLength(1);
@@ -120,6 +153,7 @@ test.describe("assistant chat", () => {
   test("“Correct it” moves focus to the message box with a hint", async ({ page }) => {
     await mockApi(page, { chatQueue: [chatProposal] });
     await page.goto("/");
+    await openAssistant(page);
 
     const input = page.getByLabel("Message to the assistant");
     await input.fill("We are closing for holidays in June");
@@ -133,8 +167,9 @@ test.describe("assistant chat", () => {
   test("shows an unavailable assistant inline and retries the same message", async ({ page }) => {
     const api = await mockApi(page);
     await page.goto("/");
+    await openAssistant(page);
 
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
     await chat.getByRole("button", { name: "Why is my balance dropping?" }).click();
 
     const alert = chat.getByRole("alert");
@@ -162,11 +197,12 @@ test.describe("assistant chat", () => {
       },
     });
     await page.goto("/");
-    const plans = page.getByRole("region", { name: "My plans" });
+    await openAssistant(page);
+    const plans = await openPlans(page);
     await expect(plans.getByRole("listitem")).toHaveCount(2);
     await expect(page.getByText("Status: Shortfall ahead")).toBeVisible();
 
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
     const input = page.getByLabel("Message to the assistant");
     await input.fill("Please remove the oven purchase");
     await input.press("Enter");
@@ -190,7 +226,11 @@ test.describe("assistant chat", () => {
     await expect(chat.getByText("Forecast updated with your plans.")).toBeVisible();
     await expect(plans.getByRole("listitem")).toHaveCount(1);
     await expect(plans.getByText("New pizza oven")).toHaveCount(0);
+    await expect(workspaceTab(page, "My plans")).toHaveText(/^My plans\s*1$/);
     await expect(page.getByText("No action needed")).toBeVisible();
+    // The tab the owner picked stays open although the Options tab went away with the shortfall.
+    await expect(workspaceTab(page, "Options")).toHaveCount(0);
+    await expect(workspaceTab(page, "My plans")).toHaveAttribute("aria-selected", "true");
     await expect.poll(() => api.requests.dashboard.length).toBeGreaterThan(dashboardCalls);
     await expect.poll(() => api.requests.recommendation).toBeGreaterThan(recommendationCalls);
 
@@ -209,10 +249,11 @@ test.describe("assistant chat", () => {
   test("“Keep it” removes nothing", async ({ page }) => {
     const api = await mockApi(page, { chatQueue: [chatRemovalProposal, chatRemovalKept] });
     await page.goto("/");
-    const plans = page.getByRole("region", { name: "My plans" });
+    await openAssistant(page);
+    const plans = await openPlans(page);
     await expect(plans.getByRole("listitem")).toHaveCount(2);
 
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const chat = assistantPanel(page);
     const input = page.getByLabel("Message to the assistant");
     await input.fill("Please remove the oven purchase");
     await input.press("Enter");
@@ -240,8 +281,9 @@ test.describe("assistant chat", () => {
     };
     const api = await mockApi(page, { chatQueue: [chatRemovalProposal, stale] });
     await page.goto("/");
-    const plans = page.getByRole("region", { name: "My plans" });
-    const chat = page.getByRole("complementary", { name: "Assistant" });
+    await openAssistant(page);
+    const plans = await openPlans(page);
+    const chat = assistantPanel(page);
     const input = page.getByLabel("Message to the assistant");
     await input.fill("Please remove the oven purchase");
     await input.press("Enter");
@@ -271,18 +313,23 @@ test.describe("my plans", () => {
     const api = await mockApi(page);
     await page.goto("/");
 
-    const plans = page.getByRole("region", { name: "My plans" });
+    const plans = await openPlans(page);
     await expect(plans.getByRole("listitem")).toHaveCount(2);
     await expect(plans).toContainText("Closure · 1 Jun – 21 Jun 2025");
     await expect(plans).toContainText("Planned expense · 10 Jun 2025 · €8,000.00");
     await expect(plans.getByText("From chat").first()).toBeVisible();
 
+    // The section heading is kept for assistive technology; the tab names the panel on screen.
+    await expect(plans.getByRole("heading", { level: 2, name: "My plans" })).toBeAttached();
+    const utterance = plans.getByText("We are closing for holidays from 1 to 21 June");
+    await expect(utterance).toBeHidden();
     await plans.getByText("What you said").first().click();
-    await expect(plans.getByText("We are closing for holidays from 1 to 21 June")).toBeVisible();
+    await expect(utterance).toBeVisible();
 
     const dashboardCalls = api.requests.dashboard.length;
     await plans.getByRole("button", { name: "Remove plan: New pizza oven" }).click();
     await expect(plans.getByRole("listitem")).toHaveCount(1);
+    await expect(workspaceTab(page, "My plans")).toHaveText(/^My plans\s*1$/);
     expect(api.requests.deletedEventIds).toEqual([12]);
     await expect.poll(() => api.requests.dashboard.length).toBeGreaterThan(dashboardCalls);
   });
@@ -299,7 +346,7 @@ test.describe("my plans", () => {
     });
     await page.goto("/");
 
-    const plans = page.getByRole("region", { name: "My plans" });
+    const plans = await openPlans(page);
     await plans.getByRole("button", { name: "Remove plan: New pizza oven" }).click();
     await expect(plans.getByRole("button", { name: "Remove plan: New pizza oven" })).toHaveText("Removing…");
     await expect(plans.getByRole("button", { name: "Remove plan: Holiday closure" })).toBeDisabled();
@@ -317,10 +364,12 @@ test.describe("my plans", () => {
       decisions: [approvedDecision],
     });
     await page.goto("/");
+    await openTab(page, "History");
     const decisionRow = page.getByRole("row", { name: /E: Postpone transfers/ });
     await expect(decisionRow).toContainText("Approved");
     await expect(decisionRow).not.toContainText("Withdrawn");
 
+    const plans = await openPlans(page);
     await page.getByRole("button", { name: "Withdraw option: Credit line of €15,000" }).click();
     const dialog = page.getByRole("dialog", { name: "Withdraw this approved option?" });
     await expect(dialog).toContainText("was put in place by an option you approved");
@@ -336,8 +385,9 @@ test.describe("my plans", () => {
     await dialog.getByRole("button", { name: "Withdraw option" }).click();
     await expect(dialog).toBeHidden();
     expect(api.requests.deletedEventIds).toEqual([22]);
-    const plans = page.getByRole("region", { name: "My plans" });
     await expect(plans.getByText("From an approved option")).toHaveCount(0);
+
+    await openTab(page, "History");
     await expect(decisionRow).toContainText("Withdrawn");
     await expect(decisionRow).toContainText("Approved, then withdrawn on");
     await expect(decisionRow).toContainText("Reversed: no longer in the forecast");
@@ -350,7 +400,8 @@ test.describe("my plans", () => {
     );
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Remove plan: New pizza oven" }).click();
+    const plans = await openPlans(page);
+    await plans.getByRole("button", { name: "Remove plan: New pizza oven" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "The plan was not removed" })).toContainText(
       "Planned event 12 does not exist.",
     );

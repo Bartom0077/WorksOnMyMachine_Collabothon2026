@@ -32,6 +32,7 @@ class InMemoryRepository:
         self.events: list[PlannedEvent] = []
         self.decisions: list[DecisionRecord] = []
         self._fingerprint_status: dict[str, DecisionStatus] = {}  # latest decision per proposal
+        self._decision_fingerprints: dict[int, str] = {}  # decision id -> proposal fingerprint
         self._next_event_id = 1
 
     def data_range(self) -> Optional[DataRange]:
@@ -87,16 +88,29 @@ class InMemoryRepository:
         )
         self.decisions.append(record)
         self._fingerprint_status[decision.forecast_snapshot[FINGERPRINT_KEY]] = decision.status
+        self._decision_fingerprints[record.id] = decision.forecast_snapshot[FINGERPRINT_KEY]
         for event in events_to_add:
             self.add_event(event, EventSource.AGENT, decision.as_of_date, decision_id=record.id)
         updates = {update.event_id: update for update in event_updates}
         self.events = [self._updated(event, updates.get(event.id)) for event in self.events]
         return record
 
+    def decision_fingerprint_statuses(self) -> dict[str, DecisionStatus]:
+        statuses: dict[str, DecisionStatus] = {}
+        for decision in sorted(self.decisions, key=lambda record: record.id):
+            if decision.withdrawn_at is None:
+                statuses[self._decision_fingerprints[decision.id]] = decision.status
+        return statuses
+
+    def record_decisions(self, decisions: Sequence[tuple[NewDecision, Sequence[EventDraft]]]
+                         ) -> list[DecisionRecord]:
+        return [self.record_decision(decision, events_to_add, ()) for decision, events_to_add in decisions]
+
     def reset_demo(self) -> None:
         self.events = []
         self.decisions = []
         self._fingerprint_status = {}
+        self._decision_fingerprints = {}
 
     def add_event(self, draft: EventDraft, source: EventSource = EventSource.CHAT,
                   as_of: date = date(2025, 5, 10), decision_id: Optional[int] = None) -> PlannedEvent:

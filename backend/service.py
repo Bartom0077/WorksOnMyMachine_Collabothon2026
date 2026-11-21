@@ -1,9 +1,10 @@
 """Application services: assemble the dashboard, the LLM dossier and owner decisions from the core modules."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from config import HISTORY_DAYS
 from domain import (
@@ -14,6 +15,7 @@ from domain import (
     DecisionStatus,
     EventDraft,
     ForecastDay,
+    LedgerEntry,
     NewDecision,
     PlannedEvent,
     RescueOption,
@@ -28,20 +30,40 @@ from repository import FINGERPRINT_KEY, Repository, StaleEventError
 from risk import assess_risk, risk_drivers
 from texts import build_fallback_recommendation, build_headline, build_insights
 
-__all__ = ["build_dashboard", "build_dossier", "build_fallback_recommendation", "record_decision", "delete_event"]
+__all__ = ["Workspace", "build_dashboard", "build_workspace", "build_dossier", "build_fallback_recommendation",
+           "record_decision", "delete_event"]
 
 DECISION_WITHDRAWN_NOTE = ("Withdrawn by the owner: the planned changes of this option were removed from the "
                            "forecast (simulated).")
 _WEEK_DAYS = 7
 
 
+@dataclass(frozen=True)
+class Workspace:
+    """The dashboard together with what it was computed from, for code that evaluates further scenarios
+    (the CFO advisors): the ledger known on the simulated "today" and the forecast function behind every figure."""
+
+    dashboard: Dashboard
+    ledger: tuple[LedgerEntry, ...]  # booked transactions up to and including "today", in EUR
+    # Every plan that is not over yet, also those that start after the horizon (``dashboard.events`` holds only
+    # the plans inside it): what an advisor needs when it looks further ahead than the forecast does.
+    active_events: tuple[PlannedEvent, ...]
+    simulate: Callable[[Sequence[EventDraft]], Scenario]  # forecast + risk for a complete list of planned events
+
+
 def build_dashboard(repository: Repository, query: DashboardQuery) -> Dashboard:
     """Compute everything the main screen shows for one simulated "today". Deterministic, no LLM."""
+    return build_workspace(repository, query).dashboard
+
+
+def build_workspace(repository: Repository, query: DashboardQuery) -> Workspace:
+    """The dashboard plus its ledger and its ``simulate`` function (see ``Workspace``)."""
     data_range = _checked_data_range(repository, query.as_of_date)
     ledger = build_ledger(repository.load_transactions(query.as_of_date))
     anchor = opening_anchor(repository.load_anchors(query.as_of_date))
     balance = balance_on(ledger, anchor, query.as_of_date)
-    events = _relevant_events(repository.list_events(), query)
+    active_events = _active_events(repository.list_events(), query.as_of_date)
+    events = _relevant_events(active_events, query)
 
     def simulate(scenario_events: Sequence[EventDraft]) -> Scenario:
         forecast = build_forecast(ledger, query.as_of_date, query.horizon_days, balance, scenario_events)
@@ -53,7 +75,7 @@ def build_dashboard(repository: Repository, query: DashboardQuery) -> Dashboard:
         rejected_fingerprints=repository.rejected_option_fingerprints(),
     ))
     history_start = max(query.as_of_date - timedelta(days=HISTORY_DAYS - 1), anchor.anchor_date)
-    return Dashboard(
+    dashboard = Dashboard(
         as_of_date=query.as_of_date,
         horizon_days=query.horizon_days,
         buffer_eur=query.buffer_eur,
@@ -69,6 +91,7 @@ def build_dashboard(repository: Repository, query: DashboardQuery) -> Dashboard:
         code_recommended_option_id=recommend(options),
         insights=build_insights(baseline.risk, balance, query.horizon_days, query.buffer_eur),
     )
+    return Workspace(dashboard=dashboard, ledger=ledger, active_events=active_events, simulate=simulate)
 
 
 def build_dossier(dashboard: Dashboard) -> dict:
@@ -157,10 +180,15 @@ def _checked_data_range(repository: Repository, as_of: date) -> DataRange:
     return data_range
 
 
-def _relevant_events(events: Sequence[PlannedEvent], query: DashboardQuery) -> tuple[PlannedEvent, ...]:
-    """Events that still lie (at least partly) in the forecast horizon; past plans no longer matter."""
+def _active_events(events: Sequence[PlannedEvent], as_of: date) -> tuple[PlannedEvent, ...]:
+    """Plans that are not over yet; past plans no longer matter."""
+    return tuple(event for event in events if event.date_to > as_of)
+
+
+def _relevant_events(active_events: Sequence[PlannedEvent], query: DashboardQuery) -> tuple[PlannedEvent, ...]:
+    """Active events that lie (at least partly) in the forecast horizon."""
     horizon_end = query.as_of_date + timedelta(days=query.horizon_days)
-    return tuple(event for event in events if event.date_to > query.as_of_date and event.date_from <= horizon_end)
+    return tuple(event for event in active_events if event.date_from <= horizon_end)
 
 
 def _dossier_event(event: PlannedEvent) -> dict:

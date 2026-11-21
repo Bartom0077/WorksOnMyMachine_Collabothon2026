@@ -1,6 +1,8 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import type { AssistantPanel } from "../hooks/useAssistantPanel";
 import type { Chat, ChatEntry } from "../hooks/useChat";
 import { EVENT_TYPE_LABELS, formatDateRange, formatEur, humanizeToolName } from "../lib/format";
+import { ASSISTANT_PANEL_ID } from "../lib/layout";
 import type { PlannedEvent, ToolCall } from "../types/api";
 import { ErrorNotice } from "./Feedback";
 import { Icon } from "./Icon";
@@ -20,6 +22,8 @@ const CORRECTION_PLACEHOLDER = "Tell me what to change, e.g. “from 2 to 15 Jun
 
 interface Props {
   chat: Chat;
+  /** Open/closed state of the panel; a closed panel stays mounted, so the conversation and the draft survive. */
+  panel: AssistantPanel;
 }
 
 /** What a plan card shows: a checked proposal and a saved plan both have these fields. */
@@ -174,17 +178,18 @@ function Entry({ entry, actionable, onSend, onCorrect }: EntryProps) {
 }
 
 /** Conversation with the assistant: describe plans, confirm recognised events, ask "why?". */
-export function ChatPanel({ chat }: Props) {
+export function ChatPanel({ chat, panel }: Props) {
   const [draft, setDraft] = useState("");
   const [placeholder, setPlaceholder] = useState(DEFAULT_PLACEHOLDER);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const { open, inputRef } = panel;
   const logRef = useRef<HTMLDivElement>(null);
   const lastEntryId = chat.entries[chat.entries.length - 1]?.id;
 
+  // Also on opening: a hidden log cannot be scrolled, so messages that arrived meanwhile are caught up with here.
   useEffect(() => {
     const log = logRef.current;
     if (log !== null) log.scrollTop = log.scrollHeight;
-  }, [lastEntryId, chat.sending, chat.failed]);
+  }, [lastEntryId, chat.sending, chat.failed, open]);
 
   /** Sends a ready-made message (suggested prompt, confirmation) without touching what the owner is typing. */
   function sendPreset(text: string) {
@@ -209,7 +214,7 @@ export function ChatPanel({ chat }: Props) {
   }
 
   return (
-    <aside id="assistant" className="chat" aria-labelledby="chat-title">
+    <aside id={ASSISTANT_PANEL_ID} ref={panel.panelRef} className="chat" aria-labelledby="chat-title" hidden={!open}>
       <header className="chat__head">
         <span className="chat__avatar" aria-hidden="true">
           <Icon name="chat" size={18} />
@@ -218,41 +223,37 @@ export function ChatPanel({ chat }: Props) {
           <h2 id="chat-title" className="chat__title">
             Assistant
           </h2>
-          <p className="chat__subtitle">Tell me your plans. I ask before saving anything.</p>
+          <p className="chat__subtitle">I ask before saving anything.</p>
         </div>
-        <a className="chat__back" href="#main">
-          <Icon name="arrowUp" size={14} />
-          Back to forecast
-        </a>
+        <button type="button" className="chat__close" aria-label="Close assistant" onClick={panel.close}>
+          <Icon name="close" size={18} />
+        </button>
       </header>
 
       <div ref={logRef} className="chat__log" role="log" aria-live="polite" aria-label="Conversation" tabIndex={0}>
         {chat.entries.length === 0 ? (
-          <p className="chat__intro">
-            Tell me what is coming up, such as a holiday closure, a big purchase or money you expect, and I will
-            show how it changes your forecast.
-          </p>
+          <p className="chat__intro">Tell me a plan and I will show how it changes your forecast.</p>
         ) : null}
         <ol className="chat__messages">
-        {chat.entries.map((entry) => (
-          <Entry
-            key={entry.id}
-            entry={entry}
-            actionable={entry.id === lastEntryId && !chat.sending}
-            onSend={sendPreset}
-            onCorrect={startCorrection}
-          />
-        ))}
-        {chat.sending ? (
-          <li className="message message--assistant message--typing">
-            <span className="typing" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </span>
-            <span className="visually-hidden">The assistant is typing…</span>
-          </li>
-        ) : null}
+          {chat.entries.map((entry) => (
+            <Entry
+              key={entry.id}
+              entry={entry}
+              actionable={entry.id === lastEntryId && !chat.sending}
+              onSend={sendPreset}
+              onCorrect={startCorrection}
+            />
+          ))}
+          {chat.sending ? (
+            <li className="message message--assistant message--typing">
+              <span className="typing" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+              <span className="visually-hidden">The assistant is typing…</span>
+            </li>
+          ) : null}
         </ol>
       </div>
 

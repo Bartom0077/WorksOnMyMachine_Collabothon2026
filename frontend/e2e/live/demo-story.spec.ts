@@ -10,6 +10,9 @@ import { type Locator, type Page, expect, test } from "@playwright/test";
  * The tests share one page and run in order; they start and end with "Reset demo", which DELETES all planned
  * events and decisions of that deployment. Figures asserted here are the ones the forecasting code computes
  * from the 2025 bank data; the LLM's wording is never asserted.
+ * Options, CFO advice, plans and history share one tab list and only the selected panel is rendered, so every
+ * step selects the tab it reads from.
+ * The assistant panel starts closed and remembers the owner's last choice, so it is opened after every page load.
  * Set SCREENSHOT_DIR to capture a full-page screenshot at every step (the key states also at 375 px).
  */
 
@@ -27,6 +30,9 @@ const FIGURES = {
   optionIds: ["A", "B", "C", "E"],
   decemberBalance: "€33,266.35",
   decemberSurplus: "€27,000.00",
+  // 31 Dec 2025: the income tax the prepayments do not cover, and what is left of the surplus after reserving it.
+  decemberTaxReserve: "€14,849.65",
+  decemberInvestmentDeposit: "€12,000.00",
 };
 
 const screenshotDir = process.env.SCREENSHOT_DIR;
@@ -55,14 +61,63 @@ test.describe("demo story on the deployed application", () => {
     await page.setViewportSize(DESKTOP);
   }
 
-  /** A figure of the status hero (the same amounts also appear in the chart caption). */
+  /** A figure of the status hero (the same amounts also appear in the option cards and the history). */
   function heroFigure(text: string): Locator {
     const hero = page.getByRole("region").filter({ has: page.getByText("Lowest projected balance", { exact: true }) });
     return hero.getByText(text, { exact: true });
   }
 
+  type TabLabel = "Options" | "CFO advice" | "My plans" | "History";
+
+  /** A workspace tab; its accessible name is the label followed by the count badge. */
+  function tab(label: TabLabel): Locator {
+    return page.getByRole("tablist", { name: "Decisions and plans" }).getByRole("tab", { name: new RegExp(`^${label}`) });
+  }
+
+  async function openTab(label: TabLabel): Promise<void> {
+    await tab(label).click();
+    await expect(tab(label)).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tabpanel")).toHaveCount(1);
+  }
+
+  async function expectTabCount(label: TabLabel, count: number): Promise<void> {
+    await expect(tab(label)).toHaveText(new RegExp(`^${label}\\s*${count}$`));
+  }
+
+  /** The "My plans" panel; select its tab first. */
   function plans(): Locator {
     return page.getByRole("region", { name: "My plans" });
+  }
+
+  /** The "History" panel (the section, not the scroll container of the same name); select its tab first. */
+  function history(): Locator {
+    return page.getByRole("region", { name: "Decision history" }).first();
+  }
+
+  /** The "CFO advice" panel; select its tab first. */
+  function cfoRecommendations(): Locator {
+    return page.getByRole("region", { name: "CFO recommendations" });
+  }
+
+  /** The deposit card of one advisor. Titles are the model's wording, so the card is found by a code-written fact. */
+  function depositCard(advisor: string): Locator {
+    return cfoRecommendations()
+      .getByRole("group", { name: advisor, exact: true })
+      .getByRole("group")
+      .filter({ has: page.getByText("Interest earned", { exact: true }) });
+  }
+
+  /** The assistant starts closed (later loads restore the last choice): puts its panel on screen for the chat steps. */
+  async function openAssistant(): Promise<void> {
+    const toggle = page.getByRole("button", { name: /^Assistant/ });
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+    await expect(page.getByRole("complementary", { name: "Assistant" })).toBeVisible();
+  }
+
+  /** Loads the application with the assistant panel open. */
+  async function loadApp(): Promise<void> {
+    await page.goto("/");
+    await openAssistant();
   }
 
   function explanationBadge(): Locator {
@@ -80,7 +135,7 @@ test.describe("demo story on the deployed application", () => {
     page = await browser.newPage({ viewport: DESKTOP });
     page.on("requestfinished", (request) => {
       const path = new URL(request.url()).pathname;
-      if (path === "/api/chat" || path === "/api/recommendation") {
+      if (path === "/api/chat" || path === "/api/recommendation" || path === "/api/advice/recommendation") {
         console.log(`[latency] POST ${path}: ${(request.timing().responseEnd / 1000).toFixed(1)} s`);
       }
     });
@@ -93,14 +148,21 @@ test.describe("demo story on the deployed application", () => {
   });
 
   test("starts from a clean demo on 10 May 2025", async () => {
-    await page.goto("/");
+    await loadApp();
     await page.getByRole("button", { name: "Reset demo" }).click();
     await page.getByRole("dialog", { name: "Reset the demo?" }).getByRole("button", { name: "Delete plans and decisions" }).click();
-    await expect(page.getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
+    // The confirmation in the main column (the same note also opens the new conversation in the assistant).
+    const confirmation = page.getByRole("main").getByRole("status").filter({ hasText: "Demo reset" });
+    await expect(confirmation).toContainText("Demo reset: all plans and decisions were deleted.");
+    await confirmation.getByRole("button", { name: "Dismiss message" }).click();
 
     await expect(page.getByLabel("Today")).toHaveValue("2025-05-10");
-    await expect(page.getByText(/No plans yet/)).toBeVisible();
-    await expect(page.getByText(/No decisions yet/)).toBeVisible();
+    await openTab("My plans");
+    await expectTabCount("My plans", 0);
+    await expect(plans().getByText(/No plans yet/)).toBeVisible();
+    await openTab("History");
+    await expectTabCount("History", 0);
+    await expect(history().getByText(/No decisions yet/)).toBeVisible();
     await expect(heroFigure(FIGURES.balanceToday)).toBeVisible();
     // The business is close to break-even: without any plans the forecast already dips just below zero.
     await expect(heroFigure(FIGURES.lowestWithoutPlans)).toBeVisible();
@@ -108,6 +170,7 @@ test.describe("demo story on the deployed application", () => {
     await expect(page.locator(".recharts-line").first()).toBeVisible();
 
     await waitForExplanation();
+    await expect(page.getByText(/^Figures: deterministic code on your bank transactions\./)).toBeVisible();
     await captureKeyState("01-initial");
   });
 
@@ -121,7 +184,8 @@ test.describe("demo story on the deployed application", () => {
     await expect(confirmation).toContainText("Closure");
     await expect(confirmation).toContainText("1 Jun – 21 Jun 2025");
     // Nothing is stored and nothing changes before the owner confirms.
-    await expect(page.getByText(/No plans yet/)).toBeVisible();
+    await openTab("My plans");
+    await expect(plans().getByText(/No plans yet/)).toBeVisible();
     await expect(heroFigure(FIGURES.lowestWithoutPlans)).toBeVisible();
     await capture("02-plan-awaiting-confirmation-desktop");
   });
@@ -134,6 +198,9 @@ test.describe("demo story on the deployed application", () => {
     await expect(heroFigure(FIGURES.lowestDate)).toBeVisible();
     await expect(page.getByText("Status: Shortfall ahead")).toBeVisible();
 
+    // The tab the owner chose stays selected when the "Options" tab appears.
+    await expect(tab("My plans")).toHaveAttribute("aria-selected", "true");
+    await expectTabCount("My plans", 1);
     const plan = plans().getByRole("listitem");
     await expect(plan).toHaveCount(1);
     await expect(plan).toContainText("Closure · 1 Jun – 21 Jun 2025");
@@ -148,10 +215,18 @@ test.describe("demo story on the deployed application", () => {
     console.log(`[explanation] ${badge}`);
     await expect(page.locator(".explanation")).not.toBeEmpty();
 
-    await page.getByRole("button", { name: "Why?" }).click();
-    await expect(page.getByRole("row", { name: /Staff salaries/ })).toContainText("Must be paid");
+    // The risk drivers are one click away, behind the "Why?" disclosure of the hero.
+    const why = page.getByText("Why?", { exact: true });
+    const salaries = page.getByRole("row", { name: /Staff salaries/ });
+    await expect(salaries).toBeHidden();
+    await why.click();
+    await expect(salaries).toContainText("Must be paid");
     await expect(page.getByRole("row", { name: /Transfer to Zurich/ })).toContainText("Can be postponed");
+    await why.click();
+    await expect(salaries).toBeHidden();
 
+    await openTab("Options");
+    await expectTabCount("Options", FIGURES.optionIds.length);
     const options = page.getByRole("article");
     await expect(options).toHaveCount(FIGURES.optionIds.length);
     for (const id of FIGURES.optionIds) {
@@ -163,14 +238,50 @@ test.describe("demo story on the deployed application", () => {
     recommendedOptionId = /Option ([A-E]):/.exec(title)?.[1] ?? "";
     expect(FIGURES.optionIds).toContain(recommendedOptionId);
     console.log(`[recommended option] ${recommendedOptionId}`);
+    // The recommended option comes first, with its approval one click away; the rest of a card is under "Details".
+    await expect(options.first()).toHaveAccessibleName(new RegExp(`^Option ${recommendedOptionId}:`));
+    await expect(recommended.getByRole("button", { name: `Approve option ${recommendedOptionId}` })).toBeVisible();
+    await expect(recommended.getByText("New lowest balance", { exact: true })).toBeVisible();
+    const reject = recommended.getByRole("button", { name: `Reject option ${recommendedOptionId}` });
+    await expect(reject).toBeHidden();
+    const optionDetails = recommended.getByText(`Details of option ${recommendedOptionId}`, { exact: true });
+    await optionDetails.click();
+    await expect(reject).toBeVisible();
+    await optionDetails.click();
+    await expect(reject).toBeHidden();
     // The recommended option is previewed on the chart by default.
     await expect(page.getByRole("list", { name: "Chart legend" })).toContainText(`Forecast with option ${recommendedOptionId}`);
     await capture("03-red-with-options-desktop");
   });
 
+  test("the workspace tabs can be operated from the keyboard", async () => {
+    await tab("Options").focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(tab("CFO advice")).toBeFocused();
+    await expect(tab("CFO advice")).toHaveAttribute("aria-selected", "true");
+    await expect(tab("Options")).toHaveAttribute("tabindex", "-1");
+    await expect(cfoRecommendations()).toBeVisible();
+    await expect(page.getByRole("article")).toHaveCount(0); // only the selected panel is rendered
+
+    await page.keyboard.press("End");
+    await expect(tab("History")).toBeFocused();
+    await expect(history()).toBeVisible();
+    await page.keyboard.press("ArrowRight"); // wraps around
+    await expect(tab("Options")).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(tab("History")).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(tab("Options")).toBeFocused();
+    await expect(tab("Options")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("article")).toHaveCount(FIGURES.optionIds.length);
+  });
+
   test("the main screen fits a 375 px phone", async () => {
     await page.setViewportSize(MOBILE);
     await expect(heroFigure(FIGURES.lowestWithClosure)).toBeVisible();
+    for (const label of ["Options", "CFO advice", "My plans", "History"] as const) {
+      await expect(tab(label)).toBeVisible();
+    }
     // Polled: the chart re-measures itself a moment after the viewport changes.
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
@@ -182,15 +293,28 @@ test.describe("demo story on the deployed application", () => {
   test("previews another option on the chart", async () => {
     const otherId = FIGURES.optionIds.find((id) => id !== recommendedOptionId) ?? "";
     const other = page.getByRole("article", { name: new RegExp(`^Option ${otherId}:`) });
-    await other.getByRole("button", { name: "Preview on chart" }).click();
+    await openTab("Options");
+    await other.getByRole("button", { name: `Preview on chart: option ${otherId}` }).click();
 
-    await expect(other.getByRole("button", { name: "Shown on chart" })).toHaveAttribute("aria-pressed", "true");
+    await expect(other.getByRole("button", { name: `Shown on chart: option ${otherId}` })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await expect(page.getByRole("list", { name: "Chart legend" })).toContainText(`Forecast with option ${otherId}`);
-    await expect(page.getByText(new RegExp(`With option ${otherId} \\(.+\\) the lowest point is`))).toBeVisible();
+    // The chart's description and the forecast table sit behind a disclosure.
+    const chartDetails = page.getByText("Details and table", { exact: true });
+    const chartSummary = page.getByText(new RegExp(`With option ${otherId} \\(.+\\) the lowest point is`));
+    await expect(chartSummary).toBeHidden();
+    await chartDetails.click();
+    await expect(chartSummary).toBeVisible();
+    await expect(page.getByRole("region", { name: "Forecast table" })).toBeVisible();
+    await chartDetails.click();
+    await expect(chartSummary).toBeHidden();
     await capture("05-option-preview-desktop");
   });
 
   test("approving the recommended option is simulated and turns the outlook GREEN", async () => {
+    await openTab("Options");
     await page.getByRole("button", { name: `Approve option ${recommendedOptionId}` }).click();
     const dialog = page.getByRole("dialog", { name: new RegExp(`Approve option ${recommendedOptionId}`) });
     await expect(dialog.getByText("SIMULATED", { exact: true })).toBeVisible();
@@ -205,12 +329,19 @@ test.describe("demo story on the deployed application", () => {
     await expect(page.getByText("Status: On track")).toBeVisible();
     await expect(page.getByText("No action needed")).toBeVisible();
     await expect(page.getByRole("article")).toHaveCount(0);
+    // With nothing left to decide the "Options" tab is gone and the default tab takes over.
+    await expect(tab("Options")).toHaveCount(0);
+    await expect(tab("CFO advice")).toHaveAttribute("aria-selected", "true");
+    await expect(cfoRecommendations()).toBeVisible();
 
-    const historyRow = page.getByRole("row", { name: new RegExp(`${recommendedOptionId}: `) });
+    await openTab("History");
+    await expectTabCount("History", 1);
+    const historyRow = history().getByRole("row", { name: new RegExp(`${recommendedOptionId}: `) });
     await expect(historyRow).toHaveCount(1);
     await expect(historyRow).toContainText("Approved");
     await expect(historyRow).toContainText("SIMULATED");
     await expect(historyRow).toContainText(FIGURES.lowestWithClosure);
+    await openTab("My plans");
     await expect(plans().getByText("From an approved option").first()).toBeVisible();
 
     await waitForExplanation();
@@ -218,6 +349,7 @@ test.describe("demo story on the deployed application", () => {
   });
 
   test("removes the holiday plan from “My plans”", async () => {
+    await openTab("My plans");
     const rows = plans().getByRole("listitem");
     const before = await rows.count();
     const closure = rows.filter({ hasText: "Closure ·" });
@@ -225,6 +357,7 @@ test.describe("demo story on the deployed application", () => {
 
     await expect(closure).toHaveCount(0);
     await expect(rows).toHaveCount(before - 1);
+    await expectTabCount("My plans", before - 1);
     await expect(page.getByText("Status: On track")).toBeVisible();
     await waitForExplanation();
     await capture("08-plan-removed-desktop");
@@ -242,6 +375,7 @@ test.describe("demo story on the deployed application", () => {
   });
 
   test("withdrawing the approved option removes all of its measures and keeps the decision on record", async () => {
+    await openTab("My plans");
     const measures = plans().getByRole("listitem").filter({ hasText: "From an approved option" });
     expect(await measures.count()).toBeGreaterThan(0);
     await measures.first().getByRole("button", { name: /^Withdraw option:/ }).click();
@@ -251,7 +385,9 @@ test.describe("demo story on the deployed application", () => {
 
     await expect(dialog).toBeHidden();
     await expect(plans().getByText(/No plans yet/)).toBeVisible();
-    const decisionRow = page.getByRole("row", { name: new RegExp(`${recommendedOptionId}: `) });
+    await expectTabCount("My plans", 0);
+    await openTab("History");
+    const decisionRow = history().getByRole("row", { name: new RegExp(`${recommendedOptionId}: `) });
     await expect(decisionRow).toContainText("Withdrawn");
     await expect(decisionRow).toContainText("Reversed: no longer in the forecast");
     await capture("10-option-withdrawn-desktop");
@@ -261,8 +397,9 @@ test.describe("demo story on the deployed application", () => {
 
   test("a plan added in the chat is in the forecast again", async () => {
     expect((await page.request.post("/api/demo/reset")).status()).toBe(204);
-    await page.goto("/"); // a fresh conversation on 10 May 2025
-    await expect(page.getByText(/No plans yet/)).toBeVisible();
+    await loadApp(); // a fresh conversation on 10 May 2025
+    await openTab("My plans");
+    await expect(plans().getByText(/No plans yet/)).toBeVisible();
     await expect(heroFigure(FIGURES.lowestWithoutPlans)).toBeVisible();
 
     const input = page.getByLabel("Message to the assistant");
@@ -312,5 +449,103 @@ test.describe("demo story on the deployed application", () => {
     const stored = (await (await page.request.get("/api/events")).json()) as { events: unknown[] };
     expect(stored.events).toHaveLength(0);
     await captureKeyState("12-removed-through-chat");
+  });
+
+  // --- CFO recommendations on a day with spare cash (31 Dec 2025: all CHF instalments are paid) ---
+
+  test("with spare cash the CFO recommends a tax reserve and an investment deposit", async () => {
+    expect((await page.request.post("/api/demo/reset")).status()).toBe(204);
+    await loadApp();
+    await page.getByLabel("Today").fill("2025-12-31");
+    await expect(heroFigure(FIGURES.decemberBalance)).toBeVisible();
+    await expect(page.getByText("Status: On track")).toBeVisible();
+    // Nothing needs rescuing, so there is no "Options" tab and the CFO advice is the panel on screen.
+    await expect(tab("Options")).toHaveCount(0);
+    await expect(tab("CFO advice")).toHaveAttribute("aria-selected", "true");
+
+    // The proposals and their figures come from code and are on screen before the model's wording arrives.
+    // No CHF instalment is left, so the currency advisor stays silent.
+    const section = cfoRecommendations();
+    await expect(section.getByRole("heading", { level: 3 })).toHaveText(["Tax", "Investments"]);
+    await expect(depositCard("Tax")).toHaveCount(1);
+    await expect(depositCard("Tax")).toContainText(FIGURES.decemberTaxReserve);
+    await expect(depositCard("Tax")).toContainText("On track");
+    await expect(depositCard("Investments")).toHaveCount(1);
+    await expect(depositCard("Investments")).toContainText(FIGURES.decemberInvestmentDeposit);
+    // The assumptions behind a figure are under the card's "Details".
+    const assumptions = depositCard("Tax").getByText("Assumptions", { exact: true });
+    await expect(assumptions).toBeHidden();
+    const proposalDetails = depositCard("Tax").getByText(/^Details: /); // followed by the title, the model's wording
+    await proposalDetails.click();
+    await expect(assumptions).toBeVisible();
+    await proposalDetails.click();
+    await expect(assumptions).toBeHidden();
+    await expect(section.getByText("Tick what you want to decide on.")).toBeVisible();
+    await expect(section.getByRole("button", { name: "Approve selected" })).toBeDisabled();
+
+    await expect(section.getByRole("status", { name: "Loading the summary of the recommendations" })).toBeHidden({
+      timeout: LLM_TIMEOUT_MS,
+    });
+    const badge = section.getByText(/^(AI summary|Standard summary \(AI unavailable\))$/);
+    await expect(badge).toBeVisible({ timeout: LLM_TIMEOUT_MS });
+    console.log(`[CFO summary] ${await badge.innerText()}`);
+    await waitForExplanation();
+    await captureKeyState("13-cfo-recommendations");
+  });
+
+  test("approving both deposits together is simulated and recorded per recommendation", async () => {
+    const section = cfoRecommendations();
+    await openTab("CFO advice");
+    await depositCard("Tax").getByRole("checkbox").check();
+    await depositCard("Investments").getByRole("checkbox").check();
+    await expect(page.getByRole("list", { name: "Chart legend" })).toContainText("Forecast with recommendations T1 + I1");
+
+    await section.getByRole("button", { name: "Approve selected" }).click();
+    const dialog = page.getByRole("dialog", { name: "Approve 2 recommendations?" });
+    await expect(dialog.getByText("SIMULATED", { exact: true })).toBeVisible();
+    await expect(dialog).toContainText(FIGURES.decemberTaxReserve);
+    await expect(dialog).toContainText(FIGURES.decemberInvestmentDeposit);
+    await expect(dialog.getByRole("listitem").last()).toContainText("(simulated)");
+    await capture("14-cfo-approval-dialog-desktop");
+
+    await dialog.getByRole("button", { name: "Approve (simulated)" }).click();
+    await expect(dialog).toBeHidden();
+
+    const banner = page.getByRole("status").filter({ hasText: "2 recommendations approved" });
+    await expect(banner.getByRole("listitem").first()).toContainText("(simulated)");
+    await expect(page.getByText("Status: On track")).toBeVisible();
+
+    await openTab("My plans");
+    const deposits = plans().getByRole("listitem").filter({ hasText: "Term deposit ·" });
+    await expect(deposits).toHaveCount(2);
+    await expect(deposits.first()).toContainText("From an approved recommendation");
+    await openTab("History");
+    await expectTabCount("History", 2);
+    for (const id of ["T1", "I1"]) {
+      const row = history().getByRole("row", { name: new RegExp(`Recommendation ${id}: `) });
+      await expect(row).toHaveCount(1);
+      await expect(row).toContainText("Approved");
+      await expect(row).toContainText("SIMULATED");
+    }
+    // What was approved is part of the forecast now and is not proposed again.
+    await openTab("CFO advice");
+    await expect(section).toBeVisible();
+    await expect(depositCard("Tax")).toHaveCount(0);
+    await expect(depositCard("Investments")).toHaveCount(0);
+    await captureKeyState("15-cfo-approved");
+  });
+
+  test("resetting the demo removes the deposits and their decisions", async () => {
+    await page.getByRole("button", { name: "Reset demo" }).click();
+    await page.getByRole("dialog", { name: "Reset the demo?" }).getByRole("button", { name: "Delete plans and decisions" }).click();
+
+    await expect(page.getByRole("main").getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
+    await openTab("My plans");
+    await expect(plans().getByText(/No plans yet/)).toBeVisible();
+    await openTab("History");
+    await expect(history().getByText(/No decisions yet/)).toBeVisible();
+    await openTab("CFO advice");
+    await expect(depositCard("Tax")).toHaveCount(1);
+    await expect(depositCard("Investments")).toHaveCount(1);
   });
 });

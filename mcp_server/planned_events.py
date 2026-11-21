@@ -36,9 +36,12 @@ CLOSURE_ENDS_TODAY = ("A closure that ends today ({today}) changes nothing: the 
 PAYMENT_DATED_TODAY = ("Today's ({today}) payments are already in the bank balance and the forecast starts "
                        "tomorrow. Put tomorrow or a later date in date_from; ask the owner if unsure.")
 
-AGENT_EVENT_NOT_REMOVABLE = ("Planned event {id} ({description}) belongs to a rescue option the owner approved, so it "
-                             "cannot be removed in the chat. Tell the owner to withdraw it with the \"Withdraw option\" "
+AGENT_EVENT_NOT_REMOVABLE = ("Planned event {id} ({description}) belongs to {origin} the owner approved, so it "
+                             "cannot be removed in the chat. Tell the owner to withdraw it with the \"{button}\" "
                              "button next to it in the \"My plans\" list.")
+# What the owner approved to create an agent event, and the label of the button that withdraws it in the UI.
+RESCUE_OPTION_ORIGIN = {"origin": "a rescue option", "button": "Withdraw option"}
+ADVISOR_PROPOSAL_ORIGIN = {"origin": "a CFO recommendation", "button": "Withdraw recommendation"}
 UNKNOWN_EVENT = ("There is no planned event with id {id}. Call list_planned_events and use the id of the plan the "
                  "owner means; if no plan matches, tell the owner so and name the plans that exist.")
 ALREADY_REMOVED = ("Planned event {id} is already gone from the plans; nothing was left to remove. Tell the owner "
@@ -47,13 +50,29 @@ REMOVAL_NOT_CONFIRMED = ("Planned event {id} was not removed: the owner has not 
                          "propose_planned_event_removal with this id, ask the owner to confirm, and remove it only "
                          "after the owner said yes.")
 
+# Events of the CFO advisors (backend/advisors), written by the backend when the owner approves a proposal. Their
+# columns do not read like a plain payment (the amount of a deposit comes back, a currency purchase replaces
+# later payments), so the listing explains each one in words. The forecast effect is computed by the backend only.
+TERM_DEPOSIT = "term_deposit"
+FX_PREBUY = "fx_prebuy"
+TAX_RESERVE_CATEGORY = "tax_reserve"
+TERM_DEPOSIT_SUMMARY = ("{purpose}: EUR {amount_eur:,.2f} is tied up in a term deposit with the bank from {date_from} "
+                        "until {date_to}, when it returns to the account with interest. The owner approved it; the "
+                        "forecast in the SITUATION already includes it.")
+TAX_RESERVE_PURPOSE = "Money set aside for income tax"
+INVESTMENT_PURPOSE = "Spare cash invested"
+FX_PREBUY_SUMMARY = ("Swiss francs bought in advance: one payment of EUR {amount_eur:,.2f} on {date_from} covers "
+                     "every Zurich instalment due up to {date_to}, so those instalments no longer leave the account. "
+                     "The owner approved it; the forecast in the SITUATION already includes it.")
+
 EVENT_COLUMNS = ("id, event_type, date_from, date_to, amount_eur, category, description, original_utterance, "
                  "source, as_of_date, decision_id, created_at")
 
 
 class EventType(str, Enum):
     """Event types the chat assistant may create (payment_deferral / credit_line come only from approved
-    rescue options and are written by the backend, never through this server)."""
+    rescue options, term_deposit / fx_prebuy only from approved CFO recommendations; the backend writes them,
+    never this server)."""
     CLOSURE = "closure"
     EXPENSE = "expense"
     INFLOW = "inflow"
@@ -231,11 +250,18 @@ def _event_id(value: Union[int, str, None]) -> int:
 
 
 def _stored_event(conn: psycopg.Connection, event_id: int) -> Optional[dict]:
-    """The saved plan with this id, if it is a chat plan; a measure of an approved option is refused."""
+    """The saved plan with this id, if it is a chat plan; a measure of an approved option or recommendation is
+    refused."""
     rows = fetch_dicts(conn, f"SELECT {EVENT_COLUMNS} FROM planned_events WHERE id = %s", (event_id,))
     if rows and rows[0]["source"] != CHAT_SOURCE:
-        raise ToolInputError(AGENT_EVENT_NOT_REMOVABLE.format(id=event_id, description=rows[0]["description"]))
+        raise ToolInputError(AGENT_EVENT_NOT_REMOVABLE.format(id=event_id, description=rows[0]["description"],
+                                                              **_approved_origin(rows[0]["event_type"])))
     return rows[0] if rows else None
+
+
+def _approved_origin(event_type: str) -> dict[str, str]:
+    """What the owner approved to create an agent event of this type, and how the owner withdraws it."""
+    return ADVISOR_PROPOSAL_ORIGIN if event_type in (TERM_DEPOSIT, FX_PREBUY) else RESCUE_OPTION_ORIGIN
 
 
 def propose_planned_event_removal(conn: psycopg.Connection, event_id: Union[int, str, None]) -> dict:
@@ -272,13 +298,25 @@ def remove_planned_event(conn: psycopg.Connection, event_id: Union[int, str, Non
 
 def list_planned_events(conn: psycopg.Connection, cutoff: Optional[date]) -> dict:
     """Planned events that still affect the forecast on the analysis date: they end after it, the same rule the
-    backend forecast applies (all events when there is no cutoff)."""
+    backend forecast applies (all events when there is no cutoff). An event of a CFO advisor carries a "summary"."""
     rows = fetch_dicts(conn, """
         SELECT id, event_type, date_from, date_to, amount_eur, category, description, source
         FROM planned_events WHERE date_to > %s
         ORDER BY date_from, id LIMIT %s""", (cutoff or date.min, MAX_LISTED_EVENTS + 1))
-    out = {"analysis_date": cutoff.isoformat() if cutoff else None, "events": rows[:MAX_LISTED_EVENTS]}
+    out = {"analysis_date": cutoff.isoformat() if cutoff else None,
+           "events": [_with_advisor_summary(row) for row in rows[:MAX_LISTED_EVENTS]]}
     if len(rows) > MAX_LISTED_EVENTS:
         out["notes"] = [f"Only the first {MAX_LISTED_EVENTS} events are shown."]
     return out
+
+
+def _with_advisor_summary(row: dict) -> dict:
+    """The listed row, with a "summary" in plain words when it is a term deposit or an advance currency purchase."""
+    event_type = row.get("event_type")
+    if event_type == TERM_DEPOSIT:
+        purpose = TAX_RESERVE_PURPOSE if row["category"] == TAX_RESERVE_CATEGORY else INVESTMENT_PURPOSE
+        return {**row, "summary": TERM_DEPOSIT_SUMMARY.format(purpose=purpose, **row)}
+    if event_type == FX_PREBUY:
+        return {**row, "summary": FX_PREBUY_SUMMARY.format(**row)}
+    return row
 

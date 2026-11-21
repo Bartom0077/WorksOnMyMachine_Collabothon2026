@@ -93,20 +93,30 @@ def _thin_buffer_headline(risk: RiskAssessment, current_balance_eur: Decimal, ho
             f"projected balance is about {lowest}, in {when}.")
 
 
-def build_insights(risk: RiskAssessment, current_balance_eur: Decimal, horizon_days: int, buffer_eur: Decimal
-                   ) -> tuple[Insight, ...]:
-    """Opportunities found by code. Currently: cash that is not needed to keep the buffer during the horizon.
+def floor_to_surplus_step(amount_eur: Decimal) -> Decimal:
+    """Round down to whole ``SURPLUS_ROUNDING_EUR`` steps; never negative."""
+    steps = (amount_eur / SURPLUS_ROUNDING_EUR).quantize(Decimal("1"), rounding=ROUND_FLOOR)
+    return max(steps, Decimal("0")) * SURPLUS_ROUNDING_EUR
+
+
+def surplus_eur(risk: RiskAssessment, current_balance_eur: Decimal, buffer_eur: Decimal) -> Decimal:
+    """Cash that is not needed to keep the buffer during the horizon, rounded down; zero unless GREEN.
 
     The surplus is measured against the real balance, never against a credit line, so an arranged but unused
-    line does not hide it.
+    line does not hide it. Shared by the surplus insight and the CFO advisors' budget.
     """
     if risk.status is not RiskStatus.GREEN:
-        return ()
-    lowest = min(current_balance_eur, risk.min_balance_eur)
-    surplus = ((lowest - buffer_eur) / SURPLUS_ROUNDING_EUR).quantize(Decimal("1"), rounding=ROUND_FLOOR)
-    surplus *= SURPLUS_ROUNDING_EUR
+        return Decimal("0")
+    return floor_to_surplus_step(min(current_balance_eur, risk.min_balance_eur) - buffer_eur)
+
+
+def build_insights(risk: RiskAssessment, current_balance_eur: Decimal, horizon_days: int, buffer_eur: Decimal
+                   ) -> tuple[Insight, ...]:
+    """Opportunities found by code. Currently: cash that is not needed to keep the buffer during the horizon."""
+    surplus = surplus_eur(risk, current_balance_eur, buffer_eur)
     if surplus < SURPLUS_INSIGHT_MIN_EUR:
         return ()
+    lowest = min(current_balance_eur, risk.min_balance_eur)
     detail = (f"You have {format_eur(current_balance_eur)} in the account and the balance is projected to stay "
               f"above {format_eur(lowest)} for the next {horizon_days} days. About {format_eur(surplus)} is not "
               f"needed for day-to-day payments or your safety buffer — consider a short-term deposit.")

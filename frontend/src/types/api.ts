@@ -2,11 +2,21 @@
 
 export type RiskStatus = "GREEN" | "YELLOW" | "RED";
 export type HorizonDays = 30 | 60 | 90;
-export type EventType = "closure" | "expense" | "inflow" | "payment_deferral" | "credit_line";
+export type EventType =
+  | "closure"
+  | "expense"
+  | "inflow"
+  | "payment_deferral"
+  | "credit_line"
+  | "term_deposit"
+  | "fx_prebuy";
 export type ChatEventType = "closure" | "expense" | "inflow";
 export type EventSource = "chat" | "agent";
 export type DecisionStatus = "approved" | "rejected";
 export type ForecastItemKind = "fixed" | "variable_revenue" | "variable_cost" | "event";
+export type AdviceAgent = "tax" | "fx" | "investment";
+export type AdviceActionType = "term_deposit" | "tax_reserve" | "fx_prebuy" | "fx_forward" | "advice";
+export type TextSource = "llm" | "fallback";
 
 export interface ScenarioParams {
   as_of_date: string;
@@ -167,7 +177,7 @@ export interface DecisionResponse {
 }
 
 export interface Recommendation {
-  source: "llm" | "fallback";
+  source: TextSource;
   fallback_reason: string | null;
   headline: string;
   explanation: string;
@@ -205,4 +215,74 @@ export interface ChatResponse {
   removed_events: PlannedEvent[];
   tool_calls: ToolCall[];
   events_changed: boolean;
+}
+
+/** One CFO recommendation; any combination of the proposals on offer can be approved together. */
+export interface AdviceProposal {
+  id: string;
+  agent: AdviceAgent;
+  action_type: AdviceActionType;
+  /** Code-written texts; the language model may reword them (see AdviceRecommendation). */
+  title: string;
+  description: string;
+  /** Cash the action takes out of the account; null when it moves no money. */
+  amount_eur: number | null;
+  date_from: string | null;
+  date_to: string | null;
+  interest_eur: number | null;
+  risk_removed_eur: number | null;
+  effect: string;
+  assumptions: string[];
+  simulated_actions: string[];
+  /** Identifies this concrete proposal; sent back with the decision so a changed proposal is refused. */
+  fingerprint: string;
+  /** The forecast with this proposal alone; equal to the baseline when it moves no money. */
+  new_min_balance_eur: number;
+  new_min_balance_date: string;
+  new_status: RiskStatus;
+  forecast: BalancePoint[];
+}
+
+/** A candidate the coordinator's rules removed; reported for debugging, never shown to the owner. */
+export interface SuppressedProposal {
+  id: string;
+  agent: AdviceAgent;
+  action_type: AdviceActionType;
+  reason_code: string;
+  reason: string;
+}
+
+export interface AdviceResponse extends ScenarioParams {
+  status: RiskStatus;
+  liquidity_first: boolean;
+  surplus_eur: number;
+  proposals: AdviceProposal[];
+  suppressed: SuppressedProposal[];
+}
+
+export interface AdviceTip {
+  title: string;
+  text: string;
+}
+
+export interface AdviceRecommendation {
+  summary: { source: TextSource; fallback_reason: string | null; headline: string; text: string };
+  /** Only agents that have something to say; tips are extra, non-selectable advice from the language model. */
+  agents: { agent: AdviceAgent; source: TextSource; fallback_reason: string | null; tips: AdviceTip[] }[];
+  /** Keyed by proposal id: one entry per proposal on offer. */
+  proposals: Record<string, { title: string; explanation: string; recommended: boolean }>;
+}
+
+export interface AdviceDecisionRequest extends ScenarioParams {
+  proposal_ids: string[];
+  status: DecisionStatus;
+  /** Keyed by proposal id: the text the owner saw on the card. */
+  explanations: Record<string, string>;
+  /** Keyed by proposal id: the fingerprint of the proposal as shown (see AdviceProposal). */
+  fingerprints: Record<string, string>;
+}
+
+export interface AdviceDecisionResponse {
+  decisions: Decision[];
+  execution_messages: string[];
 }

@@ -6,6 +6,7 @@ import logging
 import uvicorn
 from fastapi import FastAPI
 
+from advice_routes import router as advice_router
 from config import SERVICE_NAME
 from deps import get_settings
 from errors import register_error_handlers
@@ -18,6 +19,7 @@ def create_app() -> FastAPI:
     register_error_handlers(application)
     application.include_router(core_router)
     application.include_router(llm_router)
+    application.include_router(advice_router)
     return application
 
 

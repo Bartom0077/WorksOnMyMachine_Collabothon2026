@@ -67,6 +67,15 @@ class Repository(Protocol):
     def record_decision(self, decision: NewDecision, events_to_add: Sequence[EventDraft],
                         event_updates: Sequence[EventUpdate]) -> DecisionRecord: ...
 
+    def decision_fingerprint_statuses(self) -> dict[str, DecisionStatus]:
+        """Latest decision per proposal fingerprint, leaving out approvals the owner withdrew later."""
+        ...
+
+    def record_decisions(self, decisions: Sequence[tuple[NewDecision, Sequence[EventDraft]]]
+                         ) -> list[DecisionRecord]:
+        """Store several decisions, each with the planned events it creates, in ONE transaction."""
+        ...
+
     def reset_demo(self) -> None: ...
 
 
@@ -160,6 +169,32 @@ class PostgresRepository:
             for update in event_updates:
                 _update_event_dates(cur, update)
         return record
+
+    def decision_fingerprint_statuses(self) -> dict[str, DecisionStatus]:
+        with self._connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (fingerprint) fingerprint, status
+                FROM (SELECT forecast_snapshot ->> %s AS fingerprint, status, decided_at, id
+                      FROM owner_decisions WHERE withdrawn_at IS NULL) AS decisions
+                WHERE fingerprint IS NOT NULL
+                ORDER BY fingerprint, decided_at DESC, id DESC
+                """,
+                (FINGERPRINT_KEY,),
+            )
+            return {fingerprint: DecisionStatus(status) for fingerprint, status in cur.fetchall()}
+
+    def record_decisions(self, decisions: Sequence[tuple[NewDecision, Sequence[EventDraft]]]
+                         ) -> list[DecisionRecord]:
+        """All decisions and their planned events are stored together or not at all."""
+        records = []
+        with self._connection.transaction(), self._connection.cursor(row_factory=dict_row) as cur:
+            for decision, events_to_add in decisions:
+                record = _insert_decision(cur, decision)
+                for event in events_to_add:
+                    _insert_agent_event(cur, event, decision.as_of_date, record.id)
+                records.append(record)
+        return records
 
     def reset_demo(self) -> None:
         with self._connection.transaction(), self._connection.cursor() as cur:

@@ -14,7 +14,7 @@ app.py             FastMCP wiring: tool signatures/descriptions, X-As-Of-Date an
 tools.py           read tools (pure functions, whitelisted parameterised SQL)
 planned_events.py  planned-event validation, the single INSERT, the single DELETE, listing
 db.py              read-only connection, the read-write connection of the two write tools, as-of cutoff, JSON serialisation
-tests/             unit tests (no DB)
+tests/             unit tests (no DB); test_new_event_types.py adds optional database tests
 ```
 
 Transport: streamable HTTP, endpoint **`/mcp`** (stateless, JSON responses). Health: `GET /health`.
@@ -24,7 +24,7 @@ In-cluster URL: `http://amalfi-mcp.autonomous-cfo.svc.cluster.local:8080/mcp`
 
 | Tool | Purpose | Offered to the model by the product |
 |---|---|---|
-| `list_planned_events()` | saved planned events that end after the analysis date (still affect the forecast) | yes |
+| `list_planned_events()` | saved planned events that end after the analysis date (still affect the forecast); a term deposit or an advance CHF purchase of the CFO advisors carries a plain-English `summary` | yes |
 | `propose_planned_event(event_type, date_from, description, date_to?, amount_eur?)` | validates a plan from the chat, **writes nothing**; returns the proposal and a confirmation question | yes |
 | `save_planned_event(event_type, date_from, description, original_utterance, date_to?, amount_eur?)` | **write**: validates and inserts one row into `planned_events` | yes, only while a proposal the owner has seen is waiting |
 | `propose_planned_event_removal(event_id)` | looks up a saved chat plan the owner wants to remove, **removes nothing**; returns the plan and a confirmation question. Refuses unknown ids and plans created by an approved option | yes, only in a turn about removing a plan |
@@ -66,7 +66,8 @@ Rules, checked by both tools. A violation is returned as a normal result with th
 because OGX reduces tool errors to `Error (code 1): None` in its `mcp_call` output items:
 
 * `event_type` is `closure`, `expense` or `inflow` only (`payment_deferral` and `credit_line` are created
-  by the backend from approved rescue options, never from the chat);
+  by the backend from approved rescue options, `term_deposit` and `fx_prebuy` from approved CFO
+  recommendations, never from the chat);
 * the `X-As-Of-Date` header is required: it is the simulated "today" and is stored as `as_of_date`;
 * the event must lie in the forecast, which starts **tomorrow** (today's bookings are already in the bank
   balance): an `expense` / `inflow` is dated tomorrow or later, a `closure` starts today or later and ends
@@ -103,7 +104,12 @@ Results:
 // list_planned_events
 {"analysis_date": "2025-05-10",
  "events": [{"id": 12, "event_type": "closure", "date_from": "2025-06-01", "date_to": "2025-06-21",
-             "amount_eur": null, "category": null, "description": "Summer holiday closure", "source": "chat"}]}
+             "amount_eur": null, "category": null, "description": "Summer holiday closure", "source": "chat"},
+            // term_deposit / fx_prebuy rows (approved CFO recommendations) also say in words what they are;
+            // the server still computes no effect, the forecast comes from the backend
+            {"id": 31, "event_type": "term_deposit", "date_from": "2025-10-16", "date_to": "2025-11-16",
+             "amount_eur": 9000.0, "category": "tax_reserve", "description": "Tax reserve deposit", "source": "agent",
+             "summary": "Money set aside for income tax: EUR 9,000.00 is tied up in a term deposit with the bank from 2025-10-16 until 2025-11-16, when it returns to the account with interest. The owner approved it; the forecast in the SITUATION already includes it."}]}
 ```
 
 ### Removing a plan
@@ -133,9 +139,10 @@ plans measurably worse. Every deleted row is written to the server log
 (`tool=remove_planned_event removed event={...}`), the only record of a removed plan.
 
 Only plans that came from the chat (`source = 'chat'`) can be removed this way. A measure created by an
-approved rescue option is refused with an explanation: the owner withdraws the whole option with
-"Withdraw option" under "My plans". When no saved plan matches the request, the assistant says so and names
-the current plans.
+approved rescue option or an approved CFO recommendation (a term deposit, an advance CHF purchase) is refused
+with an explanation that names the button under "My plans" with which the owner withdraws the whole decision
+("Withdraw option" for a rescue option, "Withdraw recommendation" for a CFO recommendation). When no saved plan
+matches the request, the assistant says so and names the current plans.
 
 ```jsonc
 // propose_planned_event_removal (nothing removed)
@@ -188,8 +195,8 @@ Read tools plus two constrained write tools (save a chat plan, remove a chat pla
   * row level security policies on `planned_events` let the role insert and delete only rows with
     `source = 'chat'` (the delete policy is `mcp_delete_chat_events`), and the table constraint
     `planned_events_chat_scope` (`db/schema.sql`) limits chat rows to `closure`, `expense` and `inflow`.
-    The role therefore can neither create nor remove a `credit_line` or `payment_deferral`, even with
-    hand-written SQL;
+    The role therefore can neither create nor remove a `credit_line`, `payment_deferral`, `term_deposit`
+    or `fx_prebuy`, even with hand-written SQL;
   * nothing else: no `UPDATE` anywhere, no `DELETE` on any other table. Transactions, KPIs and owner
     decisions are read-only for this server.
 * The role and every session default to `default_transaction_read_only=on` with a 10 s statement timeout.
@@ -211,6 +218,7 @@ Read tools plus two constrained write tools (save a chat plan, remove a chat pla
 oc port-forward -n autonomous-cfo svc/amalfi-db 15432:5432 &
 cd mcp_server && pip install -r requirements-dev.txt   # requirements.txt + pytest
 python -m pytest -q                                    # unit tests (no database needed)
+KPI_TEST_DATABASE_URL=postgresql://... python -m pytest -q   # plus the database tests (own throw-away schema)
 PGHOST=localhost PGPORT=15432 PGDATABASE=amalfi PGUSER=amalfi_mcp PGPASSWORD=... MCP_PORT=18080 python app.py
 npx @modelcontextprotocol/inspector     # connect to http://localhost:18080/mcp (streamable HTTP)
 ```

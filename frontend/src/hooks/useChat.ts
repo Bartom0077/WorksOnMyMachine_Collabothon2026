@@ -34,6 +34,18 @@ export interface Chat {
   startNewConversation: (note: string) => void;
 }
 
+/**
+ * What the assistant is waiting for, busy with or stuck on, worded for the indicator on its toggle;
+ * null when nothing is.
+ */
+export function chatAttention(chat: Pick<Chat, "entries" | "sending" | "failed">): string | null {
+  if (chat.sending) return "is working on a reply";
+  if (chat.failed !== null) return "could not deliver your message";
+  const last = chat.entries[chat.entries.length - 1];
+  if (last?.role !== "assistant") return null;
+  return last.pendingEvents.length > 0 || last.pendingRemovals.length > 0 ? "needs your confirmation" : null;
+}
+
 /** Chat transcript and POST /chat round-trips with conversation_id continuity. */
 export function useChat(params: ScenarioParams, onEventsChanged: () => void): Chat {
   const [entries, setEntries] = useState<ChatEntry[]>([]);

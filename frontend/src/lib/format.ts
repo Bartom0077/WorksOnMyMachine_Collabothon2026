@@ -90,6 +90,17 @@ export function creditLineNote(creditLimit: number | null, lowestBalance: number
     : `${formatEurWhole(-unused)} more than the ${formatEurWhole(creditLimit)} credit line covers.`;
 }
 
+/**
+ * The short form of `creditLineNote` for a row of figures: says at a glance why a negative balance can be
+ * "On track". Null when there is no credit line or the balance never goes below zero.
+ */
+export function creditLineHint(creditLimit: number | null, lowestBalance: number): string | null {
+  if (creditLimit === null || lowestBalance >= 0) return null;
+  return creditLimit + lowestBalance >= 0
+    ? `within the ${formatEurWhole(creditLimit)} credit line`
+    : `beyond the ${formatEurWhole(creditLimit)} credit line`;
+}
+
 export const STATUS_LABELS: Record<RiskStatus, string> = {
   GREEN: "On track",
   YELLOW: "Tight",
@@ -102,6 +113,8 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   inflow: "Planned inflow",
   payment_deferral: "Deferred payment",
   credit_line: "Credit line",
+  term_deposit: "Term deposit",
+  fx_prebuy: "CHF purchase",
 };
 
 /** "get_cash_kpis" → "cash kpis"; makes MCP tool names readable in the "data used" line. */
