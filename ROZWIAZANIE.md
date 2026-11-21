@@ -22,8 +22,6 @@ Agent:
 
 ---
 
-
-
 ## 1. Problem i scenariusz demo
 
 - Właściciel: Vincenzo Amalfi, pizzeria we Frankfurcie, sam zarządza finansami.
@@ -42,8 +40,6 @@ Agent:
 
 ---
 
-
-
 ## 2. Mini słowniczek
 
 
@@ -61,8 +57,6 @@ Agent:
 
 
 ---
-
-
 
 ## 3. Architektura
 
@@ -88,7 +82,7 @@ Agent:
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Frontend (osobny pod):** React + Vite, zbudowany statycznie i serwowany przez nginx. Ruch `/api/*` nginx przekazuje do backendu.
+- **Frontend (osobny pod):** React + Vite, zbudowany statycznie i serwowany przez nginx. Ruch `/api/`* nginx przekazuje do backendu.
 - **Backend (osobny pod):** Python. Cała logika deterministyczna (kategoryzacja, KPI, prognoza, ryzyko, opcje) oraz orkiestracja rozmowy z modelem.
 - **PostgreSQL:** już istnieje; transakcje są w `bank_transactions` (sekcja 5).
 - **OGX:** jedyny punkt dostępu do modelu. Backend nie woła vLLM bezpośrednio; wysyła rozmowę do OGX (API Responses zgodne z OpenAI), a OGX przekazuje ją do vLLM i obsługuje wywołania narzędzi MCP.
@@ -97,26 +91,21 @@ Agent:
 
 Konfiguracja backendu przez zmienne środowiskowe: połączenie z bazą (`PG*`), adres OGX, identyfikator modelu w OGX, adres serwera MCP.
 
-### 3.1. Czy Streamlit nadal ma sens?
-
-**Nie.** Streamlit to framework, w którym UI i logika Pythona działają w jednym procesie
-na serwerze. Przy rozdzieleniu na dwa pody Streamlit byłby tylko „cienkim klientem” wołającym
-backend przez HTTP, a jednocześnie wciąż trzymałby stan sesji po stronie serwera i potrzebował
-WebSocketów przez Route. Dostajemy wtedy koszty obu podejść i żadnej korzyści.
+### 3.1. Frontend i backend?
 
 Rekomendacja (zgodna z tym, co jest już w repo):
 
-| Warstwa  | Technologia                                                    | Uzasadnienie                                                                                       |
-| -------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Frontend | **React + Vite** (już jest w `frontend/`, obraz nginx)          | statyczny obraz, prosty czat, interaktywny wykres, pełna kontrola nad wyglądem kart decyzji        |
-| Backend  | **Python + FastAPI** (obecny `backend/app.py` trzeba rozbudować) | silnik KPI jest już w Pythonie, FastAPI daje walidację JSON (Pydantic) i łatwy endpoint czatu      |
+
+| Warstwa  | Technologia                                                      | Uzasadnienie                                                                                  |
+| -------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Frontend | **React + Vite** (już jest w `frontend/`, obraz nginx)           | statyczny obraz, prosty czat, interaktywny wykres, pełna kontrola nad wyglądem kart decyzji   |
+| Backend  | **Python + FastAPI** (obecny `backend/app.py` trzeba rozbudować) | silnik KPI jest już w Pythonie, FastAPI daje walidację JSON (Pydantic) i łatwy endpoint czatu |
+
 
 Biblioteki dla frontendu: wykres np. `recharts` lub `chart.js`; czat jako zwykły komponent React
 (lista wiadomości + pole tekstowe), bez dodatkowych frameworków.
 
 ---
-
-
 
 ## 4. Dane wejściowe
 
@@ -124,12 +113,14 @@ Wyciąg **jest już załadowany** do tabeli `bank_transactions`
 (źródło: `Challenge/pizzeria-amalfi-bank-statement-2025-v6.csv`, import: `db/import_transactions.sql`).
 Aplikacja **nie importuje CSV** – tylko czyta z bazy.
 
-| Cecha     | Wartość                                                               |
-| --------- | --------------------------------------------------------------------- |
-| Data      | używamy `booking_date`                                                |
-| Kwota     | `amount`, minus = wydatek                                             |
-| Waluta    | prawie wszystko `EUR`, **przelewy do Zurychu w** `CHF`                |
-| Saldo     | **brak kolumny salda**                                                |
+
+| Cecha  | Wartość                                                |
+| ------ | ------------------------------------------------------ |
+| Data   | używamy `booking_date`                                 |
+| Kwota  | `amount`, minus = wydatek                              |
+| Waluta | prawie wszystko `EUR`, **przelewy do Zurychu w** `CHF` |
+| Saldo  | **brak kolumny salda**                                 |
+
 
 **Dwie ważne pułapki:**
 
@@ -140,8 +131,6 @@ Aplikacja **nie importuje CSV** – tylko czyta z bazy.
   Saldo w dniu X = 2 500 + suma wszystkich transakcji (w EUR) do dnia X włącznie.
 
 ---
-
-
 
 ## 5. Model danych (wymagania logiczne)
 
@@ -158,18 +147,20 @@ oraz harmonogram stałych zobowiązań.
 **3. Zdarzenia / plany (odczyt i zapis)** – zapisywane po potwierdzeniu w czacie (Moduł 3)
 oraz po zatwierdzeniu opcji przez właściciela (Moduł 5):
 
-| Dane                           | Opis                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------ |
-| identyfikator                  | unikalny                                                                             |
-| typ zdarzenia                  | jedna z wartości z Modułu 3 (zamknięta lista)                                        |
-| data od / data do              | dla jednodniowych data do = data od                                                  |
-| kwota (EUR)                    | puste dla zamknięcia i wstrzymania                                                   |
-| kategoria                      | tylko dla wstrzymania (np. `investment_outflow`)                                     |
-| opis                           | krótki opis rozpoznany przez AI                                                      |
-| oryginalna wypowiedź           | tekst użytkownika z czatu, z którego powstało zdarzenie (ślad audytowy)              |
-| źródło                         | `czat` (użytkownik) albo `agent` (zatwierdzona opcja)                                |
-| data „dziś" w momencie zapisu  | `as_of_date` symulacji                                                               |
-| czas utworzenia                |                                                                                      |
+
+| Dane                          | Opis                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| identyfikator                 | unikalny                                                                |
+| typ zdarzenia                 | jedna z wartości z Modułu 3 (zamknięta lista)                           |
+| data od / data do             | dla jednodniowych data do = data od                                     |
+| kwota (EUR)                   | puste dla zamknięcia i wstrzymania                                      |
+| kategoria                     | tylko dla wstrzymania (np. `investment_outflow`)                        |
+| opis                          | krótki opis rozpoznany przez AI                                         |
+| oryginalna wypowiedź          | tekst użytkownika z czatu, z którego powstało zdarzenie (ślad audytowy) |
+| źródło                        | `czat` (użytkownik) albo `agent` (zatwierdzona opcja)                   |
+| data „dziś" w momencie zapisu | `as_of_date` symulacji                                                  |
+| czas utworzenia               |                                                                         |
+
 
 **4. Decyzje właściciela (zapis, ślad audytowy):**
 „dziś" symulacji, identyfikator i opis opcji, status (`zatwierdzona` / `odrzucona`),
@@ -178,8 +169,6 @@ wykonanie (`SYMULOWANE`), wyjaśnienie od LLM, migawka prognozy w momencie decyz
 **Czego NIE trzymamy w bazie:** prognozy, średnich i kategorii transakcji. Liczymy je na bieżąco (milisekundy) przy każdym odświeżeniu.
 
 ---
-
-
 
 ## 6. Moduł 1 – Kategoryzacja (`categories.py`)
 
@@ -192,24 +181,26 @@ Klucze kategorii są takie same jak w istniejących danych referencyjnych (harmo
 
 ### 6.1. Pełna lista kategorii (na podstawie analizy CSV 2025)
 
-| `transaction_type`            | Dodatkowe dopasowanie                                   | Kategoria              | Etykieta (UI)                     | Rodzaj      | Cykl / termin                   | Przesuwalne? | Liczba / suma 2025        |
-| ----------------------------- | ------------------------------------------------------- | ---------------------- | --------------------------------- | ----------- | ------------------------------- | ------------ | ------------------------- |
-| `CARD SETTLEMENT (DEBIT)`     | –                                                       | `card_revenue_debit`   | Przychód – karty debetowe         | zmienny (+) | prawie codziennie               | –            | 335 / +109 105,08 €       |
-| `CREDIT CARD PAYOUT`          | –                                                       | `card_revenue_credit`  | Przychód – karty kredytowe        | zmienny (+) | kilka razy w tygodniu           | –            | 143 / +435 319,19 €       |
-| `SUPPLIER PAYMENT`            | –                                                       | `supplier_invoices`    | Dostawcy (Asimex, Fattoria La Vino) | zmienny (−) | wg faktur                     | –            | 239 / −180 193,06 €       |
-| `GIRO CARD PAYMENT`           | –                                                       | `fresh_produce`        | Zakupy na targu (Central Wholesale) | zmienny (−) | prawie codziennie             | –            | 292 / −76 825,66 €        |
-| `RENT PAYMENT`                | –                                                       | `rent`                 | Czynsz                            | stały       | miesięczny, 1. dnia             | nie          | 12 / −45 600,00 €         |
-| `TAX OFFICE TRANSFER`         | –                                                       | `payroll_tax`          | Podatek od wynagrodzeń            | stały       | miesięczny, 10. dnia            | nie          | 12 / −10 560,00 €         |
-| `INTERNATIONAL WIRE TRANSFER` | –                                                       | `investment_outflow`   | Przelew do Zurychu (Luigi)        | stały       | miesięczny, 15. dnia, w CHF     | **tak**      | 12 / −50 000,04 CHF       |
-| `SALARY PAYMENT`              | `Owner Salary Withdrawal` / `Vincenzo Amalfi`           | `owner_withdrawal`     | Wypłata właściciela               | stały       | miesięczny, 28. dnia            | nie          | 12 / −38 400,00 €         |
-| `SALARY PAYMENT`              | (pozostałe)                                             | `net_payroll`          | Pensje pracowników                | stały       | miesięczny, 28. dnia            | nie          | 36 / −64 800,00 €         |
-| `DIRECT DEBIT`                | `Social Security Contributions`                         | `social_security`      | Składki (Techniker Krankenkasse)  | stały       | miesięczny, 27. dnia            | nie          | 12 / −31 800,00 €         |
-| `DIRECT DEBIT`                | `Energy & Gas`                                          | `utilities`            | Energia i gaz                     | stały       | miesięczny, 10. dnia            | nie          | 12 / −7 800,00 €          |
-| `DIRECT DEBIT`                | `Income Tax Prepayment`                                 | `income_tax_advance`   | Zaliczka na podatek dochodowy     | stały       | kwartalny, 10.03/06/09/12       | nie          | 4 / −4 600,00 €           |
-| `DIRECT DEBIT`                | `Trade Tax Prepayment`                                  | `trade_tax_advance`    | Zaliczka na podatek od działalności (Gewerbe) | stały | kwartalny, 15.02/05/08/11 | nie        | 4 / −900,00 €             |
-| `DIRECT DEBIT`                | (nic nie pasuje)                                        | `other_outflow`        | Inne wydatki                      | –           | –                               | –            | 0 w 2025                  |
-| (nieznany typ), kwota ≥ 0     | –                                                       | `other_inflow`         | Inne wpływy                       | –           | –                               | –            | 0 w 2025                  |
-| (nieznany typ), kwota < 0     | –                                                       | `other_outflow`        | Inne wydatki                      | –           | –                               | –            | 0 w 2025                  |
+
+| `transaction_type`            | Dodatkowe dopasowanie                         | Kategoria             | Etykieta (UI)                                 | Rodzaj      | Cykl / termin               | Przesuwalne? | Liczba / suma 2025  |
+| ----------------------------- | --------------------------------------------- | --------------------- | --------------------------------------------- | ----------- | --------------------------- | ------------ | ------------------- |
+| `CARD SETTLEMENT (DEBIT)`     | –                                             | `card_revenue_debit`  | Przychód – karty debetowe                     | zmienny (+) | prawie codziennie           | –            | 335 / +109 105,08 € |
+| `CREDIT CARD PAYOUT`          | –                                             | `card_revenue_credit` | Przychód – karty kredytowe                    | zmienny (+) | kilka razy w tygodniu       | –            | 143 / +435 319,19 € |
+| `SUPPLIER PAYMENT`            | –                                             | `supplier_invoices`   | Dostawcy (Asimex, Fattoria La Vino)           | zmienny (−) | wg faktur                   | –            | 239 / −180 193,06 € |
+| `GIRO CARD PAYMENT`           | –                                             | `fresh_produce`       | Zakupy na targu (Central Wholesale)           | zmienny (−) | prawie codziennie           | –            | 292 / −76 825,66 €  |
+| `RENT PAYMENT`                | –                                             | `rent`                | Czynsz                                        | stały       | miesięczny, 1. dnia         | nie          | 12 / −45 600,00 €   |
+| `TAX OFFICE TRANSFER`         | –                                             | `payroll_tax`         | Podatek od wynagrodzeń                        | stały       | miesięczny, 10. dnia        | nie          | 12 / −10 560,00 €   |
+| `INTERNATIONAL WIRE TRANSFER` | –                                             | `investment_outflow`  | Przelew do Zurychu (Luigi)                    | stały       | miesięczny, 15. dnia, w CHF | **tak**      | 12 / −50 000,04 CHF |
+| `SALARY PAYMENT`              | `Owner Salary Withdrawal` / `Vincenzo Amalfi` | `owner_withdrawal`    | Wypłata właściciela                           | stały       | miesięczny, 28. dnia        | nie          | 12 / −38 400,00 €   |
+| `SALARY PAYMENT`              | (pozostałe)                                   | `net_payroll`         | Pensje pracowników                            | stały       | miesięczny, 28. dnia        | nie          | 36 / −64 800,00 €   |
+| `DIRECT DEBIT`                | `Social Security Contributions`               | `social_security`     | Składki (Techniker Krankenkasse)              | stały       | miesięczny, 27. dnia        | nie          | 12 / −31 800,00 €   |
+| `DIRECT DEBIT`                | `Energy & Gas`                                | `utilities`           | Energia i gaz                                 | stały       | miesięczny, 10. dnia        | nie          | 12 / −7 800,00 €    |
+| `DIRECT DEBIT`                | `Income Tax Prepayment`                       | `income_tax_advance`  | Zaliczka na podatek dochodowy                 | stały       | kwartalny, 10.03/06/09/12   | nie          | 4 / −4 600,00 €     |
+| `DIRECT DEBIT`                | `Trade Tax Prepayment`                        | `trade_tax_advance`   | Zaliczka na podatek od działalności (Gewerbe) | stały       | kwartalny, 15.02/05/08/11   | nie          | 4 / −900,00 €       |
+| `DIRECT DEBIT`                | (nic nie pasuje)                              | `other_outflow`       | Inne wydatki                                  | –           | –                           | –            | 0 w 2025            |
+| (nieznany typ), kwota ≥ 0     | –                                             | `other_inflow`        | Inne wpływy                                   | –           | –                           | –            | 0 w 2025            |
+| (nieznany typ), kwota < 0     | –                                             | `other_outflow`       | Inne wydatki                                  | –           | –                           | –            | 0 w 2025            |
+
 
 Kontrola: suma liczności = 1 125 (wszystkie transakcje 2025 mają kategorię inną niż `other_*`).
 
@@ -218,19 +209,19 @@ Kontrola: suma liczności = 1 125 (wszystkie transakcje 2025 mają kategorię in
 
 ### 6.2. Grupy do prognozy
 
-| Grupa                  | Kategorie                                                                                                                                     |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Przychody zmienne      | `card_revenue_debit`, `card_revenue_credit`                                                                                                   |
-| Koszty zmienne         | `supplier_invoices`, `fresh_produce`                                                                                                          |
+
+| Grupa                  | Kategorie                                                                                                                                                 |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Przychody zmienne      | `card_revenue_debit`, `card_revenue_credit`                                                                                                               |
+| Koszty zmienne         | `supplier_invoices`, `fresh_produce`                                                                                                                      |
 | Koszty stałe cykliczne | `rent`, `payroll_tax`, `investment_outflow`, `owner_withdrawal`, `net_payroll`, `social_security`, `utilities`, `income_tax_advance`, `trade_tax_advance` |
-| Inne                   | `other_inflow`, `other_outflow` – pokazywane w historii, nie prognozowane                                                                     |
+| Inne                   | `other_inflow`, `other_outflow` – pokazywane w historii, nie prognozowane                                                                                 |
+
 
 Grupy są zgodne z klasami przepływów używanymi już w silniku KPI i serwerze MCP
 (`OPERATING_INFLOW`, `VARIABLE_OUTFLOW`, `FIXED_OUTFLOW`, `OTHER_*`).
 
 ---
-
-
 
 ## 7. Moduł 2 – Prognoza (`forecast.py`)
 
@@ -274,8 +265,6 @@ for dzien in horyzont:
 
 ---
 
-
-
 ## 8. Moduł 3 – Zdarzenia z czatu (`events.py` + AI)
 
 Właściciel **nie wypełnia formularza**. Opisuje plan w czacie z asystentem AI językiem naturalnym,
@@ -288,7 +277,7 @@ AI rozpoznaje **typ zdarzenia** i jego parametry, a kod nakłada je na prognozę
 2. LLM (przez OGX) przypisuje wypowiedź do **jednego typu z zamkniętej listy** (8.2) i wyciąga parametry: daty, kwotę, opis.
 3. Jeśli czegoś brakuje albo jest niejednoznaczne (np. brak kwoty, „latem"), LLM **dopytuje**, zamiast zgadywać.
 4. LLM pokazuje w czacie podsumowanie do potwierdzenia, np.
-   *„Rozumiem: zamknięcie lokalu 01.06–21.06.2025. Czy mam to uwzględnić w prognozie?"*
+  *„Rozumiem: zamknięcie lokalu 01.06–21.06.2025. Czy mam to uwzględnić w prognozie?"*
 5. **Dopiero po potwierdzeniu** przez użytkownika LLM wywołuje narzędzie MCP zapisujące zdarzenie.
 6. Serwer MCP waliduje dane i zapisuje zdarzenie (źródło `czat`, z oryginalną wypowiedzią).
 7. Backend przelicza prognozę, ryzyko i opcje; UI odświeża wykres, a asystent komentuje zmianę.
@@ -302,13 +291,15 @@ Zdarzenia można usunąć z listy „Moje plany" w UI (przycisk „usuń").
 
 Każdy typ = jedna mała funkcja, która modyfikuje dni prognozy **przed** liczeniem salda.
 
-| Typ                               | Kto tworzy                         | Co robi z prognozą                                                                                                                         |
-| --------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `zamkniecie`                      | AI z czatu (po potwierdzeniu)      | w dniach `od..do`: przychód zmienny = 0, koszty zmienne = 0 (koszty stałe zostają)                                                         |
-| `wydatek`                         | AI z czatu (po potwierdzeniu)      | w `od`: wydatki += `kwota`                                                                                                                 |
-| `wplyw`                           | AI z czatu (po potwierdzeniu)      | w `od`: wpływy += `kwota`                                                                                                                  |
-| `wstrzymanie` ***Do wyjaśnienia*** | agent (po zatwierdzeniu opcji)    | usuwa płatność cykliczną `kategoria` w `od..do` i dopisuje ją jako `wydatek` 2 miesiące później (przesunięcie, nie anulowanie)             |
-| `linia_kredytowa`                 | agent (po zatwierdzeniu opcji)     | **nie zmienia salda**; ustawia „bezpieczne dno" = −`kwota` od `od`                                                                         |
+
+| Typ               | Kto tworzy                     | Co robi z prognozą                                                                                                             |
+| ----------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `zamkniecie`      | AI z czatu (po potwierdzeniu)  | w dniach `od..do`: przychód zmienny = 0, koszty zmienne = 0 (koszty stałe zostają)                                             |
+| `wydatek`         | AI z czatu (po potwierdzeniu)  | w `od`: wydatki += `kwota`                                                                                                     |
+| `wplyw`           | AI z czatu (po potwierdzeniu)  | w `od`: wpływy += `kwota`                                                                                                      |
+| `wstrzymanie`     | agent (po zatwierdzeniu opcji) | usuwa płatność cykliczną `kategoria` w `od..do` i dopisuje ją jako `wydatek` 2 miesiące później (przesunięcie, nie anulowanie) |
+| `linia_kredytowa` | agent (po zatwierdzeniu opcji) | **nie zmienia salda**; ustawia „bezpieczne dno" = −`kwota` od `od`                                                             |
+
 
 Z czatu AI może tworzyć tylko typy `zamkniecie`, `wydatek`, `wplyw`. Typy `wstrzymanie` i `linia_kredytowa`
 powstają wyłącznie z zatwierdzonej opcji ratunku (Moduł 5).
@@ -321,8 +312,6 @@ powstają wyłącznie z zatwierdzonej opcji ratunku (Moduł 5).
 - Potwierdzenie użytkownika jest wymagane przed zapisem (patrz otwarte kwestie, sekcja 20 – sposób wymuszenia).
 
 ---
-
-
 
 ## 9. Moduł 4 – Wykrywanie ryzyka (`risk.py`)
 
@@ -339,21 +328,19 @@ Dodatkowo liczymy **okno ryzyka**: od pierwszego dnia pod buforem do `dzien_min`
 
 ---
 
-
-
 ## 10. Moduł 5 – Opcje ratunku (`options.py`)
 
 **Opcje generuje kod, nie LLM.** Każda opcja = lista dodatkowych zdarzeń (Moduł 3).
 Dla każdej kod **liczy prognozę od nowa** i zapisuje wynik.
 
 
-| ID  | Opcja                             | Jak liczona                                                          | Koszt                                                  |
-| --- | --------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
-| A   | Linia kredytowa                   | `limit` = (−min_saldo + bufor) zaokrąglone w górę do 5 000 €         | odsetki: Σ dni max(0, −saldo) × 9% / 365 (*założenie*) |
-| B   | Przesunięcie przelewów do Zurychu | `wstrzymanie` kategorii `investment_outflow` w oknie ryzyka          | 0 € (wymaga rozmowy z bratem)                          |
-| C   | Krótszy urlop                     | zmiana `zamkniecie` na 7 dni                                         | niefinansowy: „2 tygodnie mniej urlopu"                |
-| D   | Przesunięcie planowanego wydatku  | tylko jeśli jest `wydatek` w oknie ryzyka → przesuń za `dzien_min`   | 0 €                                                    |
-| E   | Kombinacja B + mniejsza linia     | najpierw B, potem A na tym, co zostało                               | odsetki (mniejsze niż w A)                             |
+| ID  | Opcja                             | Jak liczona                                                        | Koszt                                                  |
+| --- | --------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------ |
+| A   | Linia kredytowa                   | `limit` = (−min_saldo + bufor) zaokrąglone w górę do 5 000 €       | odsetki: Σ dni max(0, −saldo) × 9% / 365 (*założenie*) |
+| B   | Przesunięcie przelewów do Zurychu | `wstrzymanie` kategorii `investment_outflow` w oknie ryzyka        | 0 € (wymaga rozmowy z bratem)                          |
+| C   | Krótszy urlop                     | zmiana `zamkniecie` na 7 dni                                       | niefinansowy: „2 tygodnie mniej urlopu"                |
+| D   | Przesunięcie planowanego wydatku  | tylko jeśli jest `wydatek` w oknie ryzyka → przesuń za `dzien_min` | 0 €                                                    |
+| E   | Kombinacja B + mniejsza linia     | najpierw B, potem A na tym, co zostało                             | odsetki (mniejsze niż w A)                             |
 
 
 Każda opcja w wyniku:
@@ -371,30 +358,28 @@ a przy remisie mniej „bolesna" opcja niefinansowa.
 
 ---
 
-
-
 ## 11. Moduł 6 – LLM (`llm.py` w backendzie + OGX + MCP)
 
 ### Jak backend rozmawia z modelem
 
 - Backend wysyła rozmowę do **OGX** (API Responses zgodne z OpenAI), nigdy bezpośrednio do vLLM.
 - W wywołaniu przekazuje serwer MCP jako narzędzie oraz nagłówek `X-As-Of-Date` = „dziś" symulacji,
-  więc model nie widzi danych z przyszłości.
+więc model nie widzi danych z przyszłości.
 - Historię rozmowy przechowuje OGX; backend kontynuuje ją, odwołując się do poprzedniej odpowiedzi.
 - Model korzysta z narzędzi MCP, które zwracają KPI i dane o transakcjach (lista narzędzi – do uzupełnienia),
-  oraz z narzędzia zapisu zdarzeń (Moduł 3).
+oraz z narzędzia zapisu zdarzeń (Moduł 3).
 
 ### Rola LLM
 
 1. **Asystent scenariuszy (czat, Moduł 3):** rozumie opis planu w języku naturalnym, przypisuje go do jednego
-   typu zdarzenia z zamkniętej listy, wyciąga daty i kwotę, dopytuje o brakujące dane, pokazuje podsumowanie
+  typu zdarzenia z zamkniętej listy, wyciąga daty i kwotę, dopytuje o brakujące dane, pokazuje podsumowanie
    i po potwierdzeniu zapisuje zdarzenie przez MCP.
 2. **Analiza sytuacji:** pobiera KPI i dane przez narzędzia MCP (tylko do odczytu) zamiast liczyć je samodzielnie.
 3. **Wyjaśnienie prostym językiem:** co się stanie, kiedy i dlaczego (które wydatki, który okres),
-   bo właściciel nie jest finansistą.
+  bo właściciel nie jest finansistą.
 4. **Rekomendacja:** wybiera **jedną z opcji policzonych przez kod** (Moduł 5) i uzasadnia wybór.
 5. **Odpowiedzi na pytania** typu „dlaczego?", „co jeśli…?" w tym samym czacie. Pytanie „co jeśli…"
-   z nowym planem traktuje jak scenariusz z punktu 1 (zdarzenie → potwierdzenie → przeliczenie przez kod).
+  z nowym planem traktuje jak scenariusz z punktu 1 (zdarzenie → potwierdzenie → przeliczenie przez kod).
 
 LLM **nie** liczy salda ani prognozy, **nie** wymyśla nowych opcji ratunku i **nie** podejmuje decyzji
 finansowych – zatwierdza zawsze właściciel (Moduł 7, karty opcji).
@@ -465,8 +450,6 @@ Rekomendację zwróć jako JSON:
 
 ---
 
-
-
 ## 12. Moduł 7 – UI (React, `frontend/`)
 
 **Pasek górny:** data „dziś" (domyślnie 2025-05-10), horyzont (30/60/90), bufor (€).
@@ -491,8 +474,6 @@ Rekomendację zwróć jako JSON:
 
 ---
 
-
-
 ## 13. Przepływ E2E (krok po kroku)
 
 1. **Start:** transakcje są już w `bank_transactions` – brak importu.
@@ -506,29 +487,25 @@ Rekomendację zwróć jako JSON:
 9. Backend buduje **teczkę JSON**, a **LLM** (z KPI z MCP) zwraca wyjaśnienie i rekomendację.
 10. UI pokazuje światło, wykres, wyjaśnienie, karty opcji i odpowiedź w czacie.
 11. Właściciel klika **„Zatwierdź E"**:
-    - zapis decyzji (status `zatwierdzona`, wykonanie `SYMULOWANE`, migawka prognozy),
+  - zapis decyzji (status `zatwierdzona`, wykonanie `SYMULOWANE`, migawka prognozy),
     - opcja zamienia się na zdarzenia (źródło `agent`),
     - komunikat: *„Wniosek o linię kredytową 15 000 € wysłany do Commerzbanku (symulacja). Przelew do Luigiego przesunięty na sierpień (symulacja)."*
 12. Prognoza przelicza się automatycznie, a światło zmienia się na 🟢.
 
 ---
 
-
-
 ## 14. Kto co robi (wymóg z karty challenge'u)
 
 
-| Poziom                  | Co                                                                                     |
-| ----------------------- | -------------------------------------------------------------------------------------- |
-| **Agent analizuje sam** | kategoryzacja, KPI, prognoza, wykrycie ryzyka, symulacja opcji                         |
-| **Agent rekomenduje**   | rozpoznanie zdarzenia z czatu, wybór najlepszej opcji + wyjaśnienie prostym językiem   |
+| Poziom                  | Co                                                                                            |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| **Agent analizuje sam** | kategoryzacja, KPI, prognoza, wykrycie ryzyka, symulacja opcji                                |
+| **Agent rekomenduje**   | rozpoznanie zdarzenia z czatu, wybór najlepszej opcji + wyjaśnienie prostym językiem          |
 | **Wymaga zgody**        | zapis zdarzenia z czatu do prognozy; każda akcja z pieniędzmi (kredyt, przesunięcie przelewu) |
-| **Wykonanie**           | wyłącznie **symulowane**; zapis decyzji w bazie                                        |
+| **Wykonanie**           | wyłącznie **symulowane**; zapis decyzji w bazie                                               |
 
 
 ---
-
-
 
 ## 15. Scenariusz demo (3 minuty)
 
@@ -541,21 +518,17 @@ Rekomendację zwróć jako JSON:
 
 ---
 
-
-
 ## 16. Wdrożenie na OpenShift AI
 
 1. **Model:** OpenShift AI → Model Serving → runtime **vLLM**, model `cfo-llm` (już wdrożony, `deploy/`).
 2. **OGX:** `deploy/ogx-base-config.yaml` + `deploy/ogx.yaml` – serwer OGX przed vLLM.
 3. **Serwer MCP:** `deploy/mcp-server.yaml` (obecnie tylko odczyt; do dodania narzędzie zapisu zdarzeń i uprawnienie zapisu do danych zdarzeń).
 4. **Postgres:** już jest, dane załadowane.
-5. **Backend:** osobny pod, obraz Python (UBI, `deploy/backend.yaml`), Service; zmienne `PG*`, adres OGX, model, adres MCP.
-6. **Frontend:** osobny pod, obraz nginx z buildem React (`frontend/Dockerfile`, `deploy/openshift.yaml`), Route; nginx przekazuje `/api/*` do backendu.
+5. **Backend:** osobny pod, obraz Python (UBI, `deploy/backend.yaml`), Service; zmienne `PG`*, adres OGX, model, adres MCP.
+6. **Frontend:** osobny pod, obraz nginx z buildem React (`frontend/Dockerfile`, `deploy/openshift.yaml`), Route; nginx przekazuje `/api/`* do backendu.
 7. **Bonusy:** vLLM ✅, OGX + MCP ✅, Jupyter Notebook do prototypowania prognozy, MLflow do logowania wywołań LLM (jeśli zostanie czas).
 
 ---
-
-
 
 ## 17. Struktura repozytorium
 
@@ -580,43 +553,7 @@ Rekomendację zwróć jako JSON:
 
 ---
 
-
-
-## 18. Podział pracy i plan dnia
-
-
-| Osoba | Zakres                                                                         |
-| ----- | ------------------------------------------------------------------------------ |
-| 1     | `categories.py`, `forecast.py` (najlepiej najpierw w Jupyterze)                |
-| 2     | `events.py`, `risk.py`, `options.py`, narzędzie MCP do zapisu zdarzeń          |
-| 3     | frontend React (wykres, czat, karty opcji, plany), API backendu (FastAPI)      |
-| 4     | OGX + MCP + model, `llm.py`, prompt, deployment podów                          |
-
-
-**Kontrakt między osobami (ustalić na starcie!):**
-
-- format dnia prognozy: `{data, saldo, wplywy, wydatki, pozycje[]}`,
-- format zdarzenia (sekcja 5 pkt 3 i sekcja 8.2),
-- format opcji (sekcja 10),
-- format teczki dla LLM (sekcja 11),
-- endpointy REST między frontendem a backendem.
-
-
-| Godzina | Cel                                                                                  |
-| ------- | ------------------------------------------------------------------------------------ |
-| 0–2 h   | kategoryzacja + saldo historyczne na wykresie (zgadza się z wykresem organizatorów?) |
-| 2–4 h   | prognoza + zdarzenia + status ryzyka; czat → zapis zdarzenia przez MCP               |
-| 4–6 h   | opcje A–E + LLM odpowiada na teczkę                                                  |
-| 6–8 h   | zatwierdzanie, decyzje, zielona linia                                                |
-| 8–10 h  | szlif UI, próba demo                                                                 |
-| reszta  | bonusy: grudzień/lokata, MLflow                                                      |
-
-
-**Test poprawności:** saldo historyczne 10.05.2025 = **3 205,69 €**, 03.07.2025 = **−22 097,60 €**, a 31.12.2025 = **+33 266,35 €**.
-
 ---
-
-
 
 ## 19. Czego świadomie NIE robimy
 
@@ -628,13 +565,9 @@ Rekomendację zwróć jako JSON:
 
 ---
 
-
-
 ## 20. Otwarte kwestie (do ustalenia w zespole)
 
-1. **`wstrzymanie`** – dokładna mechanika przesunięcia przelewów do Zurychu (o ile miesięcy, czy w CHF po jakim kursie).
-2. **Horyzont prognozy** – ten dokument zakłada 60 dni, a istniejący silnik KPI liczy prognozę na 30 dni. Czy Moduł 2 ma rozszerzyć silnik KPI, czy być osobnym kodem?
-3. **Lista narzędzi MCP z KPI** – szczegóły do dopisania.
-4. **Wymuszenie potwierdzenia przed zapisem zdarzenia** – samą instrukcją w prompcie czy mechanizmem zatwierdzania wywołań narzędzi MCP w OGX (do sprawdzenia, czy wersja OGX na klastrze to wspiera).
-5. **Dodatkowe typy zdarzeń z czatu** – np. nowy koszt cykliczny („zatrudniam kucharza za 2 000 €/mies.") lub zmiana poziomu przychodów. Obecnie poza zakresem.
-6. **Przesuwalność** innych kosztów stałych (np. wypłaty właściciela) jako dodatkowej opcji ratunku.
+1. **Horyzont prognozy** – ten dokument zakłada 60 dni, a istniejący silnik KPI liczy prognozę na 30 dni. Czy Moduł 2 ma rozszerzyć silnik KPI, czy być osobnym kodem? Odpowiedź: do MCP została dodana metoda umożliwiająca policzenie prognozy salda na 365 dni bez zapisywania tej wartości w historii. get_balance_forecast prognoza na N dni liczona na żądanie, niezapisywana, do horyzontów innych niż 7, 14 i 30 dni
+2. **Lista narzędzi MCP z KPI** – jest opisana w mcp_server
+3. **Wymuszenie potwierdzenia przed zapisem zdarzenia** – samą instrukcją w prompcie czy mechanizmem zatwierdzania wywołań narzędzi MCP w OGX (do sprawdzenia, czy wersja OGX na klastrze to wspiera). Odpowiedź: intrukcja w prompcie
+
