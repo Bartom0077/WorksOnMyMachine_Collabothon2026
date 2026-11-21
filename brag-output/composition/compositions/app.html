@@ -1,0 +1,1108 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      font-family: "Open Sans", sans-serif;
+      color: #0b2a33;
+    }
+    #ap-stage {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+    #ap-bg {
+      position: absolute;
+      inset: 0;
+      background: #f2f5f6;
+    }
+    #ap-stage svg {
+      display: block;
+    }
+
+    /* ---------- Top bar ---------- */
+    #ap-top {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 96px;
+      background: #002e3c;
+      color: #ffffff;
+    }
+    #ap-mark {
+      position: absolute;
+      left: 48px;
+      top: 28px;
+      width: 46px;
+      height: 46px;
+      background: #ffcc33;
+      clip-path: polygon(0 100%, 50% 0, 100% 100%, 72% 100%, 50% 56%, 28% 100%);
+    }
+    #ap-wordmark {
+      position: absolute;
+      left: 112px;
+      top: 20px;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 22px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #b9cbd1;
+    }
+    #ap-product {
+      position: absolute;
+      left: 112px;
+      top: 40px;
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 40px;
+      letter-spacing: -0.01em;
+    }
+    .ap-field {
+      position: absolute;
+      top: 14px;
+      height: 72px;
+    }
+    .ap-field .lab {
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 22px;
+      color: #b9cbd1;
+      white-space: nowrap;
+    }
+    .ap-field .val {
+      margin-top: 4px;
+      height: 42px;
+      padding: 0 14px;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #0b2a33;
+      font-size: 20px;
+      font-weight: 400;
+      line-height: 42px;
+      white-space: nowrap;
+    }
+    .ap-seg {
+      margin-top: 4px;
+      display: flex;
+      height: 42px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #0b4252;
+    }
+    .ap-seg span {
+      padding: 0 16px;
+      font-size: 20px;
+      line-height: 42px;
+      color: #ffffff;
+      white-space: nowrap;
+    }
+    .ap-seg span.on {
+      background: #ffcc33;
+      color: #002e3c;
+      font-weight: 700;
+    }
+    #ap-toggle {
+      position: absolute;
+      left: 1664px;
+      top: 26px;
+      width: 208px;
+      height: 52px;
+      border: 3px solid #ffcc33;
+      border-radius: 8px;
+      color: #ffcc33;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 46px;
+    }
+    #ap-toggle svg {
+      position: absolute;
+      left: 30px;
+      top: 10px;
+    }
+    #ap-toggle span {
+      position: absolute;
+      left: 68px;
+      top: 0;
+    }
+    /* The yellow that filled the frame, drawn large and scaled down into the Assistant button. */
+    #ap-cover {
+      position: absolute;
+      left: -2184px;
+      top: -2132px;
+      width: 7904px;
+      height: 4368px;
+      border-radius: 300px;
+      background: #ffcc33;
+    }
+
+    /* ---------- Cards ---------- */
+    .ap-card {
+      position: absolute;
+      background: #ffffff;
+      border: 1px solid #d9e2e5;
+      border-radius: 20px;
+      box-shadow: 0 2px 4px rgba(0, 46, 60, 0.06), 0 8px 28px rgba(0, 46, 60, 0.06);
+      overflow: hidden;
+    }
+    #ap-hero {
+      left: 48px;
+      top: 124px;
+      width: 1180px;
+      height: 268px;
+    }
+    #ap-bar {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 8px;
+      height: 268px;
+      background: #d0342c;
+    }
+    #ap-traffic {
+      position: absolute;
+      left: 32px;
+      top: 22px;
+      width: 46px;
+      height: 114px;
+      border-radius: 23px;
+      background: #002e3c;
+    }
+    .ap-lamp {
+      position: absolute;
+      left: 10px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #29505c;
+    }
+    #ap-lamp-red {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #ff5a4f;
+      box-shadow: 0 0 16px rgba(255, 90, 79, 0.85);
+    }
+    #ap-lamp-green {
+      position: absolute;
+      left: 10px;
+      top: 78px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #45d483;
+      box-shadow: 0 0 16px rgba(69, 212, 131, 0.85);
+    }
+    .ap-status {
+      position: absolute;
+      left: 104px;
+      top: 20px;
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 30px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    #ap-status-red {
+      color: #b3261e;
+    }
+    #ap-status-green {
+      color: #17693f;
+    }
+    .ap-headline {
+      position: absolute;
+      left: 104px;
+      top: 54px;
+      width: 1050px;
+      font-size: 36px;
+      font-weight: 700;
+      line-height: 48px;
+      letter-spacing: -0.015em;
+      white-space: nowrap;
+    }
+    #ap-figline {
+      position: absolute;
+      left: 32px;
+      top: 124px;
+      width: 1116px;
+      height: 1px;
+      background: #d9e2e5;
+    }
+    .ap-fig {
+      position: absolute;
+      top: 136px;
+      width: 290px;
+    }
+    .ap-fig .dt {
+      font-size: 18px;
+      font-weight: 600;
+      line-height: 26px;
+      color: #4d646c;
+      white-space: nowrap;
+    }
+    .ap-fig .dd {
+      font-size: 34px;
+      font-weight: 700;
+      line-height: 46px;
+      letter-spacing: -0.01em;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .ap-fig .note {
+      font-size: 18px;
+      line-height: 26px;
+      color: #4d646c;
+      white-space: nowrap;
+    }
+    #ap-low {
+      color: #b3261e;
+    }
+
+    /* ---------- Chart ---------- */
+    #ap-chart {
+      left: 48px;
+      top: 416px;
+      width: 1180px;
+      height: 624px;
+    }
+    #ap-chart-title {
+      position: absolute;
+      left: 28px;
+      top: 22px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 34px;
+      white-space: nowrap;
+    }
+    #ap-legend {
+      position: absolute;
+      left: 620px;
+      top: 26px;
+      width: 532px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 28px;
+      font-size: 18px;
+      line-height: 28px;
+      color: #4d646c;
+      white-space: nowrap;
+    }
+    #ap-legend span {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #ap-plot {
+      position: absolute;
+      left: 28px;
+      top: 84px;
+      width: 1124px;
+      height: 500px;
+    }
+    #ap-plot text {
+      font-family: "Open Sans", sans-serif;
+      font-size: 18px;
+      fill: #4d646c;
+    }
+
+    /* ---------- Options ---------- */
+    #ap-work {
+      left: 48px;
+      top: 416px;
+      width: 1180px;
+      height: 624px;
+    }
+    #ap-tabs {
+      position: absolute;
+      left: 28px;
+      top: 12px;
+      width: 1124px;
+      height: 52px;
+      display: flex;
+      gap: 36px;
+      border-bottom: 1px solid #d9e2e5;
+      font-size: 21px;
+      font-weight: 600;
+      line-height: 50px;
+      color: #4d646c;
+      white-space: nowrap;
+    }
+    #ap-tabs .on {
+      color: #0b2a33;
+      font-weight: 700;
+      box-shadow: inset 0 -4px 0 #ffcc33;
+    }
+    #ap-tabs .count {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: #e9eef0;
+      color: #3d545c;
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 28px;
+    }
+    .ap-opt {
+      position: absolute;
+      left: 28px;
+      width: 1124px;
+      border: 1px solid #d9e2e5;
+      border-radius: 16px;
+      background: #ffffff;
+    }
+    #ap-opt-e {
+      top: 80px;
+      height: 196px;
+      border-color: #f0dc9a;
+      border-left: 6px solid #ffcc33;
+      background: #fffbee;
+    }
+    #ap-opt-a {
+      top: 292px;
+      height: 92px;
+    }
+    #ap-opt-b {
+      top: 396px;
+      height: 92px;
+    }
+    #ap-opt-c {
+      top: 500px;
+      height: 92px;
+    }
+    .ap-letter {
+      position: absolute;
+      left: 22px;
+      top: 24px;
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: #002e3c;
+      color: #ffffff;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 44px;
+      text-align: center;
+    }
+    .ap-otitle {
+      position: absolute;
+      left: 84px;
+      top: 26px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 40px;
+      white-space: nowrap;
+    }
+    #ap-opt-e .ap-otitle {
+      font-size: 28px;
+    }
+    .ap-chip {
+      display: inline-block;
+      padding: 0 14px;
+      border-radius: 999px;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 32px;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    .ap-chip.green {
+      background: #e4f4ea;
+      color: #17693f;
+    }
+    .ap-chip.red {
+      background: #fde9e7;
+      color: #b3261e;
+    }
+    .ap-chip.rec {
+      background: #ffcc33;
+      color: #002e3c;
+    }
+    .ap-chip.sim {
+      background: transparent;
+      border: 2px dashed #4d646c;
+      color: #3d545c;
+      letter-spacing: 0.05em;
+      line-height: 28px;
+    }
+    #ap-rec {
+      position: absolute;
+      left: 880px;
+      top: 30px;
+    }
+    .ap-fact {
+      position: absolute;
+      white-space: nowrap;
+    }
+    .ap-fact .dt {
+      font-size: 17px;
+      line-height: 24px;
+      color: #4d646c;
+    }
+    .ap-fact .dd {
+      font-size: 26px;
+      font-weight: 700;
+      line-height: 40px;
+      font-variant-numeric: tabular-nums;
+    }
+    .ap-fact .hint {
+      font-size: 19px;
+      font-weight: 400;
+      color: #4d646c;
+      margin-left: 10px;
+    }
+    .ap-fact .ap-chip {
+      margin-left: 10px;
+    }
+    .ap-row-amt {
+      position: absolute;
+      left: 520px;
+      top: 26px;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 40px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .ap-row-cost {
+      position: absolute;
+      left: 850px;
+      top: 26px;
+      font-size: 20px;
+      line-height: 40px;
+      color: #4d646c;
+      white-space: nowrap;
+    }
+    .ap-row-cost b {
+      color: #0b2a33;
+      font-variant-numeric: tabular-nums;
+    }
+    .ap-btn {
+      position: absolute;
+      height: 52px;
+      border-radius: 10px;
+      border: 2px solid #b4c3c8;
+      background: #ffffff;
+      color: #0b2a33;
+      font-size: 21px;
+      font-weight: 700;
+      line-height: 48px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .ap-btn.primary {
+      background: #002e3c;
+      border-color: #002e3c;
+      color: #ffffff;
+    }
+    .ap-btn.ghost {
+      border-color: transparent;
+      background: transparent;
+      color: #0b4252;
+      font-weight: 600;
+    }
+    .ap-row-btn {
+      left: 986px;
+      top: 20px;
+      width: 116px;
+    }
+    #ap-approve {
+      left: 940px;
+      top: 112px;
+      width: 156px;
+    }
+    #ap-preview {
+      left: 720px;
+      top: 112px;
+      width: 208px;
+    }
+    #ap-done {
+      position: absolute;
+      left: 760px;
+      top: 122px;
+      width: 340px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    #ap-done .ap-chip {
+      margin-left: 10px;
+    }
+
+    /* ---------- Assistant panel ---------- */
+    #ap-chat {
+      left: 1276px;
+      top: 124px;
+      width: 596px;
+      height: 916px;
+    }
+    #ap-chat-head {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 596px;
+      height: 84px;
+      background: #002e3c;
+      color: #ffffff;
+    }
+    #ap-avatar {
+      position: absolute;
+      left: 24px;
+      top: 18px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #ffcc33;
+    }
+    #ap-avatar svg {
+      position: absolute;
+      left: 11px;
+      top: 11px;
+    }
+    #ap-chat-title {
+      position: absolute;
+      left: 88px;
+      top: 12px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 32px;
+    }
+    #ap-chat-sub {
+      position: absolute;
+      left: 88px;
+      top: 44px;
+      font-size: 19px;
+      line-height: 26px;
+      color: #c6d5da;
+      white-space: nowrap;
+    }
+    #ap-intro {
+      position: absolute;
+      left: 24px;
+      top: 104px;
+      width: 548px;
+      font-size: 21px;
+      line-height: 30px;
+      color: #4d646c;
+    }
+    .ap-msg {
+      position: absolute;
+      padding: 14px 18px;
+      border-radius: 20px;
+      font-size: 22px;
+      line-height: 30px;
+    }
+    .ap-msg.user {
+      background: #002e3c;
+      color: #ffffff;
+      border-bottom-right-radius: 6px;
+    }
+    .ap-msg.bot {
+      background: #ffffff;
+      border: 1px solid #d9e2e5;
+      border-bottom-left-radius: 6px;
+    }
+    #ap-m1 {
+      left: 152px;
+      top: 184px;
+      width: 420px;
+    }
+    #ap-dots {
+      left: 24px;
+      top: 292px;
+      width: 92px;
+      height: 54px;
+    }
+    #ap-dots i {
+      position: absolute;
+      top: 22px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4d646c;
+    }
+    #ap-m2 {
+      left: 24px;
+      top: 292px;
+      width: 470px;
+      height: 196px;
+      padding: 16px;
+    }
+    #ap-draft {
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      width: 436px;
+      height: 100px;
+      border: 1px solid #f0dc9a;
+      border-left: 6px solid #ffcc33;
+      border-radius: 10px;
+      background: #fffbee;
+    }
+    #ap-draft .type {
+      position: absolute;
+      left: 16px;
+      top: 12px;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 32px;
+    }
+    #ap-draft .when {
+      position: absolute;
+      left: 16px;
+      top: 50px;
+      font-size: 20px;
+      line-height: 30px;
+      white-space: nowrap;
+    }
+    #ap-draft .when span {
+      color: #4d646c;
+      margin-right: 14px;
+    }
+    #ap-yes {
+      left: 16px;
+      top: 130px;
+      width: 212px;
+      height: 48px;
+      font-size: 20px;
+      line-height: 44px;
+    }
+    #ap-correct {
+      left: 240px;
+      top: 130px;
+      width: 136px;
+      height: 48px;
+      font-size: 20px;
+      line-height: 44px;
+    }
+    #ap-m3 {
+      left: 172px;
+      top: 508px;
+      width: 400px;
+    }
+    #ap-saved {
+      position: absolute;
+      left: 24px;
+      top: 616px;
+      font-size: 20px;
+      font-weight: 600;
+      line-height: 30px;
+      color: #17693f;
+      white-space: nowrap;
+    }
+    #ap-input {
+      position: absolute;
+      left: 24px;
+      top: 832px;
+      width: 472px;
+      height: 60px;
+      border: 2px solid #b4c3c8;
+      border-radius: 10px;
+      background: #ffffff;
+    }
+    #ap-placeholder,
+    #ap-typed {
+      position: absolute;
+      left: 16px;
+      top: 13px;
+      font-size: 19px;
+      line-height: 30px;
+      white-space: nowrap;
+    }
+    #ap-placeholder {
+      color: #4d646c;
+    }
+    #ap-send {
+      position: absolute;
+      left: 512px;
+      top: 832px;
+      width: 60px;
+      height: 60px;
+      border-radius: 10px;
+      background: #002e3c;
+    }
+    #ap-send svg {
+      position: absolute;
+      left: 16px;
+      top: 16px;
+    }
+
+    #ap-cursor {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 44px;
+      height: 44px;
+    }
+    /* The green lamp's light, drawn large and scaled down so it stays sharp while it fills the frame. */
+    #ap-flood {
+      position: absolute;
+      left: -1997px;
+      top: -1863px;
+      width: 4200px;
+      height: 4200px;
+      border-radius: 50%;
+      background: #45d483;
+    }
+  </style>
+
+  <div id="root" data-composition-id="app" data-width="1920" data-height="1080">
+    <div id="ap-stage" class="clip" data-start="0" data-duration="13.75" data-track-index="0">
+      <div id="ap-bg"></div>
+
+      <!-- Top bar -->
+      <div id="ap-top">
+        <div id="ap-mark"></div>
+        <div id="ap-wordmark">Commerzbank</div>
+        <div id="ap-product">FinGuard</div>
+        <div class="ap-field" style="left: 560px">
+          <div class="lab">Today</div>
+          <div class="val">10 May 2025</div>
+        </div>
+        <div class="ap-field" style="left: 760px">
+          <div class="lab">Look ahead</div>
+          <div class="ap-seg"><span>30</span><span class="on">60 days</span><span>90</span></div>
+        </div>
+        <div class="ap-field" style="left: 1020px">
+          <div class="lab">Safety buffer (€)</div>
+          <div class="val">3000</div>
+        </div>
+        <div id="ap-toggle">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffcc33" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
+          </svg>
+          <span>Assistant</span>
+        </div>
+      </div>
+
+      <!-- Status card -->
+      <div id="ap-hero" class="ap-card">
+        <div id="ap-bar"></div>
+        <div id="ap-traffic">
+          <div class="ap-lamp" style="top: 10px"></div>
+          <div class="ap-lamp" style="top: 44px"></div>
+          <div class="ap-lamp" style="top: 78px"></div>
+          <div id="ap-lamp-red"></div>
+          <div id="ap-lamp-green"></div>
+        </div>
+        <div id="ap-status-red" class="ap-status" data-layout-allow-overlap>Shortfall ahead</div>
+        <div id="ap-status-green" class="ap-status" data-layout-allow-overlap>On track</div>
+        <div id="ap-h1" class="ap-headline" data-layout-allow-overlap>In about 7 weeks you will be about €300 short.</div>
+        <div id="ap-h2" class="ap-headline" data-layout-allow-overlap>In about 7 weeks you will be about €16,000 short.</div>
+        <div id="ap-h3" class="ap-headline" data-layout-allow-overlap>You are covered for the next 60 days.</div>
+        <div id="ap-figline"></div>
+        <div class="ap-fig" style="left: 32px">
+          <div class="dt">Balance today</div>
+          <div class="dd">€3,205.69</div>
+          <div class="note">10 May 2025</div>
+        </div>
+        <div class="ap-fig" style="left: 322px">
+          <div class="dt">Lowest projected balance</div>
+          <div id="ap-low" class="dd">−€325.55</div>
+          <div class="note">on 1 Jul 2025</div>
+        </div>
+        <div class="ap-fig" style="left: 632px">
+          <div class="dt">Low point</div>
+          <div class="dd">in about 7 weeks</div>
+          <div class="note">next 60 days</div>
+        </div>
+        <div id="ap-fig-credit" class="ap-fig" style="left: 942px; width: 230px">
+          <div class="dt">Credit line</div>
+          <div class="dd">€15,000.00</div>
+          <div class="note">agreed limit</div>
+        </div>
+      </div>
+
+      <!-- Balance chart -->
+      <div id="ap-chart" class="ap-card">
+        <div id="ap-chart-title">Balance: past 90 days and next 60 days</div>
+        <div id="ap-legend">
+          <span
+            ><svg width="34" height="8"><line x1="1" y1="4" x2="33" y2="4" stroke="#0a6c94" stroke-width="3.5" stroke-linecap="round" /></svg
+            >Past balance</span
+          >
+          <span
+            ><svg width="34" height="8"><line x1="1" y1="4" x2="33" y2="4" stroke="#a81e1e" stroke-width="3.5" stroke-dasharray="8 5" stroke-linecap="round" /></svg
+            >Forecast if you do nothing</span
+          >
+        </div>
+        <svg id="ap-plot" viewBox="0 0 1124 500" data-layout-allow-overlap>
+          <defs>
+            <clipPath id="ap-below"><rect id="ap-below-rect" x="0" y="0" width="1124" height="500" /></clipPath>
+          </defs>
+          <g id="ap-grid"></g>
+          <rect id="ap-closed" y="26" height="434" fill="#4d646c" fill-opacity="0.16" />
+          <text id="ap-closed-label" text-anchor="middle" y="48">Closed</text>
+          <line id="ap-zero" stroke="#0b2a33" stroke-width="1.5" />
+          <line id="ap-buffer" stroke="#7a5200" stroke-width="1.5" stroke-dasharray="5 5" />
+          <text id="ap-buffer-label" style="fill: #7a5200; stroke: #ffffff; stroke-width: 5px; paint-order: stroke; font-weight: 600">Safety buffer</text>
+          <line id="ap-today" stroke="#4d646c" stroke-width="1.5" stroke-dasharray="4 4" />
+          <text id="ap-today-label" text-anchor="middle" style="fill: #0b2a33; font-weight: 700">Today</text>
+          <polygon id="ap-area" fill="#a81e1e" fill-opacity="0.14" clip-path="url(#ap-below)" />
+          <polyline id="ap-hist" fill="none" stroke="#0a6c94" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" />
+          <polyline id="ap-fore" fill="none" stroke="#a81e1e" stroke-width="4" stroke-dasharray="10 7" stroke-linejoin="round" stroke-linecap="round" />
+          <circle id="ap-dot" r="9" fill="#a81e1e" stroke="#ffffff" stroke-width="3" />
+        </svg>
+      </div>
+
+      <!-- Options -->
+      <div id="ap-work" class="ap-card">
+        <div id="ap-tabs">
+          <span class="on">Options <span class="count">4</span></span>
+          <span>CFO advice</span>
+          <span>My plans <span class="count">1</span></span>
+          <span>History</span>
+        </div>
+
+        <div id="ap-opt-e" class="ap-opt">
+          <div class="ap-letter">E</div>
+          <div class="ap-otitle">Postpone payments + smaller credit line</div>
+          <div id="ap-rec"><span class="ap-chip rec">★ Recommended</span></div>
+          <div class="ap-fact" style="left: 84px; top: 96px">
+            <div class="dt">New lowest balance</div>
+            <div class="dd">
+              −€7,061.74<span class="ap-chip green">On track</span><span class="hint">within the €15,000 credit line</span>
+            </div>
+          </div>
+          <div id="ap-preview" class="ap-btn ghost">Preview on chart</div>
+          <div id="ap-approve" class="ap-btn primary">Approve</div>
+          <div id="ap-done"><span class="ap-chip green">✓ Approved</span><span class="ap-chip sim">SIMULATED</span></div>
+          <div class="ap-fact" style="left: 720px; top: 30px">
+            <div class="dd" style="font-size: 22px; line-height: 32px"><span class="hint" style="margin: 0 10px 0 0; font-size: 20px">Cost</span>€12.66</div>
+          </div>
+        </div>
+
+        <div id="ap-opt-a" class="ap-opt">
+          <div class="ap-letter">A</div>
+          <div class="ap-otitle">Credit line</div>
+          <div class="ap-row-amt">−€15,728.42 <span class="ap-chip green">On track</span></div>
+          <div class="ap-row-cost">Cost <b>€67.60</b></div>
+          <div class="ap-btn ap-row-btn">Approve</div>
+        </div>
+        <div id="ap-opt-b" class="ap-opt">
+          <div class="ap-letter">B</div>
+          <div class="ap-otitle">Postpone the transfer to Zurich</div>
+          <div class="ap-row-amt">−€7,061.74 <span class="ap-chip red">Shortfall ahead</span></div>
+          <div class="ap-row-cost">Cost <b>€18.28</b></div>
+          <div class="ap-btn ap-row-btn">Approve</div>
+        </div>
+        <div id="ap-opt-c" class="ap-opt">
+          <div class="ap-letter">C</div>
+          <div class="ap-otitle">Shorter closure</div>
+          <div class="ap-row-amt">−€5,459.84 <span class="ap-chip red">Shortfall ahead</span></div>
+          <div class="ap-row-cost">Cost <b>€16.48</b></div>
+          <div class="ap-btn ap-row-btn">Approve</div>
+        </div>
+      </div>
+
+      <!-- Assistant panel -->
+      <div id="ap-chat" class="ap-card">
+        <div id="ap-chat-head">
+          <div id="ap-avatar">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#002e3c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
+            </svg>
+          </div>
+          <div id="ap-chat-title">Assistant</div>
+          <div id="ap-chat-sub">I ask before saving anything.</div>
+        </div>
+        <div id="ap-intro">Tell me a plan and I will show how it changes your forecast.</div>
+
+        <div id="ap-m1" class="ap-msg user">We are closing for holidays from 1 to 21 June</div>
+        <div id="ap-dots" class="ap-msg bot" data-layout-allow-overlap>
+          <i id="ap-d1" style="left: 22px"></i><i id="ap-d2" style="left: 41px"></i><i id="ap-d3" style="left: 60px"></i>
+        </div>
+        <div id="ap-m2" class="ap-msg bot" data-layout-allow-overlap>
+          <div id="ap-draft">
+            <div class="type">Closure</div>
+            <div class="when"><span>When</span>1 Jun – 21 Jun 2025</div>
+          </div>
+          <div id="ap-yes" class="ap-btn primary">✓ Yes, include it</div>
+          <div id="ap-correct" class="ap-btn">Correct it</div>
+        </div>
+        <div id="ap-m3" class="ap-msg user">Yes, please include it in the forecast.</div>
+        <div id="ap-saved">✓ Added to your plans: Holiday closure</div>
+
+        <div id="ap-input">
+          <div id="ap-placeholder" data-layout-allow-overlap>Describe a plan or ask a question…</div>
+          <div id="ap-typed" data-layout-allow-overlap></div>
+        </div>
+        <div id="ap-send">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12h15M13 6l6 6-6 6" />
+          </svg>
+        </div>
+      </div>
+
+      <div id="ap-cover" data-layout-ignore></div>
+      <div id="ap-flood" data-layout-ignore></div>
+      <svg id="ap-cursor" viewBox="0 0 24 24" data-layout-ignore>
+        <path d="M5 3l14 8.2-6.2 1.5L10 19z" fill="#ffffff" stroke="#001f29" stroke-width="1.4" stroke-linejoin="round" />
+      </svg>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      // Chart geometry computed from the project's own forecast code on the challenge bank statement
+      // (as of 10 May 2025, 60 days): 90 days of history, the baseline forecast and the forecast with the closure.
+      const C = {"W":1124,"H":500,"L":82,"R":1104,"T":26,"B":460,"hist":[[82.0,129.1],[88.9,122.0],[95.7,121.8],[102.6,131.4],[109.4,92.8],[116.3,164.8],[123.2,163.6],[130.0,126.1],[136.9,122.5],[143.7,122.2],[150.6,131.6],[157.4,93.8],[164.3,100.8],[171.2,99.2],[178.0,53.8],[184.9,47.5],[191.7,47.4],[198.6,95.3],[205.5,184.7],[212.3,246.8],[219.2,245.6],[226.0,206.4],[232.9,198.3],[239.8,198.1],[246.6,206.1],[253.5,165.1],[260.3,172.6],[267.2,171.5],[274.1,169.8],[280.9,161.5],[287.8,161.5],[294.6,171.4],[301.5,136.7],[308.3,207.4],[315.2,206.5],[322.1,165.8],[328.9,159.2],[335.8,158.6],[342.6,168.5],[349.5,131.5],[356.4,134.9],[363.2,134.4],[370.1,97.6],[376.9,93.0],[383.8,92.8],[390.7,139.1],[397.5,227.1],[404.4,232.9],[411.2,232.1],[418.1,190.8],[425.0,240.5],[431.8,240.1],[438.7,249.6],[445.5,206.9],[452.4,210.9],[459.2,209.5],[466.1,168.2],[473.0,164.2],[479.8,163.6],[486.7,194.2],[493.5,154.5],[500.4,158.7],[507.3,157.8],[514.1,113.3],[521.0,166.3],[527.8,166.5],[534.7,175.3],[541.6,133.0],[548.4,141.3],[555.3,139.5],[562.1,95.6],[569.0,89.9],[575.9,90.0],[582.7,99.4],[589.6,60.0],[596.4,68.4],[603.3,105.0],[610.1,182.6],[617.0,176.6],[623.9,175.9],[630.7,238.7],[637.6,201.3],[644.4,208.7],[651.3,204.2],[658.2,166.7],[665.0,160.5],[671.9,160.3],[678.7,170.5],[685.6,134.0],[692.5,164.1]],"base":[[692.5,164.1],[699.3,153.6],[706.2,143.1],[713.0,132.6],[719.9,122.2],[726.8,176.8],[733.6,166.3],[740.5,155.9],[747.3,145.4],[754.2,134.9],[761.0,124.4],[767.9,113.9],[774.8,103.5],[781.6,93.0],[788.5,82.5],[795.3,72.0],[802.2,61.5],[809.1,88.9],[815.9,201.3],[822.8,190.9],[829.6,180.4],[836.5,169.9],[843.4,213.7],[850.2,203.2],[857.1,192.7],[863.9,182.3],[870.8,171.8],[877.7,161.3],[884.5,150.8],[891.4,140.3],[898.2,129.9],[905.1,157.7],[911.9,147.2],[918.8,136.7],[925.7,126.2],[932.5,115.7],[939.4,167.2],[946.2,156.7],[953.1,146.2],[960.0,135.7],[966.8,125.3],[973.7,114.8],[980.5,104.3],[987.4,93.8],[994.3,83.3],[1001.1,72.9],[1008.0,62.4],[1014.8,51.9],[1021.7,79.3],[1028.6,191.7],[1035.4,181.2],[1042.3,170.7],[1049.1,214.6],[1056.0,204.1],[1062.8,193.6],[1069.7,183.1],[1076.6,172.6],[1083.4,162.1],[1090.3,151.7],[1097.1,141.2],[1104.0,130.7]],"clos":[[692.5,164.1],[699.3,153.6],[706.2,143.1],[713.0,132.6],[719.9,122.2],[726.8,176.8],[733.6,166.3],[740.5,155.9],[747.3,145.4],[754.2,134.9],[761.0,124.4],[767.9,113.9],[774.8,103.5],[781.6,93.0],[788.5,82.5],[795.3,72.0],[802.2,61.5],[809.1,88.9],[815.9,201.3],[822.8,190.9],[829.6,180.4],[836.5,169.9],[843.4,224.2],[850.2,224.2],[857.1,224.2],[863.9,224.2],[870.8,224.2],[877.7,224.2],[884.5,224.2],[891.4,224.2],[898.2,224.2],[905.1,262.5],[911.9,262.5],[918.8,262.5],[925.7,262.5],[932.5,262.5],[939.4,324.4],[946.2,324.4],[953.1,324.4],[960.0,324.4],[966.8,324.4],[973.7,324.4],[980.5,324.4],[987.4,313.9],[994.3,303.5],[1001.1,293.0],[1008.0,282.5],[1014.8,272.0],[1021.7,299.4],[1028.6,411.8],[1035.4,401.3],[1042.3,390.9],[1049.1,434.7],[1056.0,424.2],[1062.8,413.7],[1069.7,403.2],[1076.6,392.8],[1083.4,382.3],[1090.3,371.8],[1097.1,361.3],[1104.0,350.8]],"xToday":692.5,"xC0":843.4,"xC1":980.5,"xMin":1049.1,"y0":209.9,"yBuf":167.0,"yMinBase":214.6,"yMinClos":434.7,"yt":[[-15000,424.3],[-10000,352.8],[-5000,281.4],[0,209.9],[5000,138.5],[10000,67.0]],"xt":[["1 Apr",425.0],["1 May",630.7],["1 Jun",843.4],["1 Jul",1049.1]]};
+      const NS = "http://www.w3.org/2000/svg";
+      const $ = function (id) {
+        return document.getElementById(id);
+      };
+      const pts = function (a) {
+        return a
+          .map(function (p) {
+            return p[0] + "," + p[1];
+          })
+          .join(" ");
+      };
+      const grid = $("ap-grid");
+      C.yt.forEach(function (t) {
+        const l = document.createElementNS(NS, "line");
+        l.setAttribute("x1", C.L);
+        l.setAttribute("x2", C.R);
+        l.setAttribute("y1", t[1]);
+        l.setAttribute("y2", t[1]);
+        l.setAttribute("stroke", "#d9e2e5");
+        grid.appendChild(l);
+        const tx = document.createElementNS(NS, "text");
+        tx.setAttribute("x", C.L - 12);
+        tx.setAttribute("y", t[1] + 6);
+        tx.setAttribute("text-anchor", "end");
+        tx.textContent = (t[0] < 0 ? "−€" : "€") + Math.abs(t[0] / 1000) + (t[0] === 0 ? "" : "K");
+        grid.appendChild(tx);
+      });
+      C.xt.forEach(function (t) {
+        const tx = document.createElementNS(NS, "text");
+        tx.setAttribute("x", t[1]);
+        tx.setAttribute("y", C.B + 30);
+        tx.setAttribute("text-anchor", "middle");
+        tx.textContent = t[0];
+        grid.appendChild(tx);
+      });
+      const setLine = function (el, x1, y1, x2, y2) {
+        el.setAttribute("x1", x1);
+        el.setAttribute("y1", y1);
+        el.setAttribute("x2", x2);
+        el.setAttribute("y2", y2);
+      };
+      setLine($("ap-zero"), C.L, C.y0, C.R, C.y0);
+      setLine($("ap-buffer"), C.L, C.yBuf, C.R, C.yBuf);
+      $("ap-buffer-label").setAttribute("x", C.L + 10);
+      $("ap-buffer-label").setAttribute("y", C.yBuf - 9);
+      setLine($("ap-today"), C.xToday, C.T, C.xToday, C.B);
+      $("ap-today-label").setAttribute("x", C.xToday);
+      $("ap-today-label").setAttribute("y", C.T - 6);
+      $("ap-closed").setAttribute("x", C.xC0);
+      $("ap-closed").setAttribute("width", C.xC1 - C.xC0);
+      $("ap-closed-label").setAttribute("x", (C.xC0 + C.xC1) / 2);
+      $("ap-below-rect").setAttribute("y", C.y0);
+      $("ap-hist").setAttribute("points", pts(C.hist));
+
+      const fmt = function (v) {
+        const n = Math.abs(v).toFixed(2).split(".");
+        return (v < 0 ? "−€" : "€") + n[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "." + n[1];
+      };
+      const MSG = "We are closing for holidays from 1 to 21 June";
+      const st = { p: 0, low: -325.55, n: 0 };
+      const draw = function () {
+        const cur = C.base.map(function (b, i) {
+          return [b[0], b[1] + (C.clos[i][1] - b[1]) * st.p];
+        });
+        $("ap-fore").setAttribute("points", pts(cur));
+        $("ap-area").setAttribute("points", pts(cur) + " " + C.R + "," + C.y0 + " " + C.xToday + "," + C.y0);
+        $("ap-dot").setAttribute("cx", C.xMin);
+        $("ap-dot").setAttribute("cy", C.yMinBase + (C.yMinClos - C.yMinBase) * st.p);
+        $("ap-low").textContent = fmt(st.low);
+        $("ap-typed").textContent = MSG.slice(0, Math.round(st.n));
+      };
+      draw();
+
+      const tl = gsap.timeline({ paused: true, onUpdate: draw });
+      const hide = function (sel) {
+        tl.set(sel, { opacity: 0 }, 0);
+      };
+      ["#ap-lamp-green", "#ap-status-green", "#ap-h2", "#ap-h3", "#ap-fig-credit", "#ap-closed", "#ap-closed-label", "#ap-m1", "#ap-dots", "#ap-m2", "#ap-m3", "#ap-saved", "#ap-work", "#ap-done", "#ap-cursor", "#ap-flood"].forEach(hide);
+
+      // ---- The yellow contracts into the Assistant button; the cockpit is there ----
+      tl.fromTo("#ap-cover", { scaleX: 1, scaleY: 1, opacity: 1, transformOrigin: "50% 50%" }, { scaleX: 0.0263, scaleY: 0.0119, duration: 0.5, ease: "expo.out" }, 0);
+      tl.to("#ap-cover", { opacity: 0, duration: 0.12, ease: "power2.in" }, 0.4);
+      tl.fromTo(["#ap-hero", "#ap-chart", "#ap-chat"], { scale: 1.03, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.6, ease: "expo.out", stagger: 0.04 }, 0);
+
+      // ---- The owner types the plan (abs 7.7 to 8.7) ----
+      tl.to("#ap-placeholder", { opacity: 0, duration: 0.05 }, 0.7);
+      tl.fromTo(st, { n: 0 }, { n: MSG.length, duration: 1.0, ease: "none" }, 0.7);
+      // Sent. // beat-locked: 8.74s
+      tl.to("#ap-typed", { opacity: 0, duration: 0.06 }, 1.72);
+      tl.to("#ap-placeholder", { opacity: 1, duration: 0.1 }, 1.78);
+      tl.fromTo("#ap-send", { scale: 1, transformOrigin: "50% 50%" }, { scale: 0.9, duration: 0.07, yoyo: true, repeat: 1, ease: "power2.out" }, 1.68);
+      tl.fromTo("#ap-m1", { opacity: 0, y: 46, scale: 0.96, transformOrigin: "100% 100%" }, { opacity: 1, y: 0, scale: 1, duration: 0.34, ease: "power3.out" }, 1.74);
+
+      // The assistant thinks, then asks. // beat-locked: 9.29s
+      tl.fromTo("#ap-dots", { opacity: 0 }, { opacity: 1, duration: 0.1 }, 1.92);
+      tl.fromTo("#ap-d1", { opacity: 0.25 }, { opacity: 1, duration: 0.12, yoyo: true, repeat: 1 }, 1.95);
+      tl.fromTo("#ap-d2", { opacity: 0.25 }, { opacity: 1, duration: 0.12, yoyo: true, repeat: 1 }, 2.03);
+      tl.fromTo("#ap-d3", { opacity: 0.25 }, { opacity: 1, duration: 0.12, yoyo: true, repeat: 1 }, 2.11);
+      tl.to("#ap-dots", { opacity: 0, duration: 0.06 }, 2.25);
+      tl.fromTo("#ap-m2", { opacity: 0, y: 24, scale: 0.97, transformOrigin: "0% 100%" }, { opacity: 1, y: 0, scale: 1, duration: 0.36, ease: "power3.out" }, 2.29);
+
+      // Cursor to "Yes, include it"; click. // beat-locked: 10.93s
+      tl.fromTo("#ap-cursor", { opacity: 0, x: 1700, y: 880 }, { opacity: 1, x: 1700, y: 880, duration: 0.12 }, 2.75);
+      tl.to("#ap-cursor", { x: 1440, y: 574, duration: 0.9, ease: "power3.inOut" }, 2.9);
+      tl.to("#ap-yes", { scale: 0.95, transformOrigin: "50% 50%", duration: 0.07, ease: "power2.out" }, 3.9);
+      tl.to("#ap-yes", { scale: 1, duration: 0.12, ease: "power2.out" }, 3.97);
+      tl.fromTo("#ap-m3", { opacity: 0, y: 30, scale: 0.96, transformOrigin: "100% 100%" }, { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: "power3.out" }, 4.02);
+      tl.fromTo("#ap-saved", { opacity: 0 }, { opacity: 1, duration: 0.2, ease: "power2.out" }, 4.5);
+
+      // ---- The forecast falls (abs 10.95 to 12.3) ----
+      tl.fromTo(st, { p: 0 }, { p: 1, duration: 1.3, ease: "power2.inOut" }, 3.97);
+      tl.fromTo(st, { low: -325.55 }, { low: -15728.42, duration: 1.3, ease: "power2.inOut" }, 3.97);
+      tl.to(["#ap-closed", "#ap-closed-label"], { opacity: 1, duration: 0.4, ease: "power2.out" }, 4.05);
+      tl.to("#ap-h1", { opacity: 0, filter: "blur(8px)", duration: 0.16, ease: "power2.in" }, 4.55);
+      tl.fromTo("#ap-h2", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.16, ease: "power2.out" }, 4.72);
+      tl.to("#ap-cursor", { x: 1560, y: 760, opacity: 0, duration: 0.5, ease: "power2.inOut" }, 4.3);
+
+      // ---- Chart gives way to the options (abs 14.73) ----
+      tl.to("#ap-chart", { opacity: 0, filter: "blur(10px)", duration: 0.2, ease: "power2.in" }, 7.73);
+      tl.fromTo("#ap-work", { opacity: 0, filter: "blur(10px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power2.out" }, 7.95);
+      // Cards arrive one per beat, then hold as a set.
+      // beat-grid: E at 15.29s, A at 15.84s, B at 16.38s, C at 16.93s
+      [["#ap-opt-e", 8.29], ["#ap-opt-a", 8.84], ["#ap-opt-b", 9.38], ["#ap-opt-c", 9.93]].forEach(function (o) {
+        tl.fromTo(o[0], { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.38, ease: "power3.out" }, o[1]);
+      });
+
+      // Cursor to "Approve" on E; click. // beat-locked: 17.47s
+      tl.fromTo("#ap-cursor", { x: 1460, y: 900 }, { x: 1460, y: 900, opacity: 1, duration: 0.12, immediateRender: false }, 9.3);
+      tl.to("#ap-cursor", { x: 1100, y: 640, duration: 0.95, ease: "power3.inOut" }, 9.42);
+      tl.to("#ap-approve", { scale: 0.94, transformOrigin: "50% 50%", duration: 0.07, ease: "power2.out" }, 10.44);
+      tl.to("#ap-approve", { scale: 1, duration: 0.12, ease: "power2.out" }, 10.51);
+
+      // ---- Approved: the status turns green ----
+      tl.to(["#ap-approve", "#ap-preview"], { opacity: 0, duration: 0.12, ease: "power2.in" }, 10.6);
+      tl.to("#ap-done", { opacity: 1, duration: 0.2, ease: "power2.out" }, 10.72);
+      tl.to("#ap-lamp-red", { opacity: 0, duration: 0.12 }, 10.52);
+      tl.to("#ap-lamp-green", { opacity: 1, duration: 0.12 }, 10.56);
+      tl.to("#ap-bar", { backgroundColor: "#1f8a53", duration: 0.3, ease: "power2.inOut" }, 10.52);
+      tl.to("#ap-status-red", { opacity: 0, duration: 0.12 }, 10.52);
+      tl.to("#ap-status-green", { opacity: 1, duration: 0.16 }, 10.62);
+      tl.to("#ap-h2", { opacity: 0, filter: "blur(8px)", duration: 0.14, ease: "power2.in" }, 10.52);
+      tl.fromTo("#ap-h3", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.16, ease: "power2.out" }, 10.68);
+      tl.fromTo(st, { low: -15728.42 }, { low: -7061.74, duration: 0.6, ease: "power2.out", immediateRender: false }, 10.52);
+      tl.to("#ap-low", { color: "#0b2a33", duration: 0.3 }, 10.6);
+      tl.to("#ap-fig-credit", { opacity: 1, duration: 0.25, ease: "power2.out" }, 10.8);
+      tl.to("#ap-cursor", { x: 1300, y: 820, opacity: 0, duration: 0.5, ease: "power2.inOut" }, 10.9);
+
+      // ---- The green lamp becomes the world (abs 20.3) ----
+      tl.fromTo("#ap-flood", { scale: 0.006, transformOrigin: "50% 50%" }, { scale: 0.006, opacity: 1, duration: 0.02, immediateRender: false }, 13.28);
+      tl.to("#ap-flood", { scale: 1, duration: 0.36, ease: "power3.in" }, 13.3);
+
+      window.__timelines["app"] = tl;
+    })();
+  </script>
+</template>

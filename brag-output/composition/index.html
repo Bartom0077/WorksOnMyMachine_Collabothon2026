@@ -1,0 +1,75 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[
+    {"id":"color-ground","type":"color","label":"Entry frame background","default":"#002e3c"},
+    {"id":"color-accent","type":"color","label":"Accent","default":"#ffcc33"},
+    {"id":"product","type":"string","label":"Product name","default":"FinGuard"},
+    {"id":"subtitle","type":"string","label":"Subtitle","default":"Autonomous CFO for Pizzeria Amalfi"},
+    {"id":"team","type":"string","label":"Team line","default":"Team WorksOnMyMachine · Collabothon 2026"}
+  ]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #002e3c;
+      }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        font-family: "Open Sans", sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="25" data-width="1920" data-height="1080">
+      <!-- Scenes: entry frame + the owner, the cockpit, the entry frame again -->
+      <div id="open" data-composition-id="open" data-composition-src="compositions/open.html" data-start="0" data-duration="7" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="app" data-composition-id="app" data-composition-src="compositions/app.html" data-start="7" data-duration="13.75" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="close" data-composition-id="close" data-composition-src="compositions/close.html" data-start="20.75" data-duration="4.25" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+
+      <!-- Music -->
+      <audio id="bg-music" class="clip" data-timeline-role="music" data-start="0" data-duration="25" data-track-index="10" data-volume="0.34" data-fade-in="0.4" data-fade-out="1.4" src="assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3"></audio>
+
+      <!-- Sound effects: each one has a cause on screen -->
+      <audio id="sfx-lamp-red" class="clip" data-start="2.19" data-duration="0.18" data-track-index="11" data-volume="0.6" src="assets/sfx/impact/impactSoft_medium_001.ogg"></audio>
+      <audio id="sfx-click-assistant" class="clip" data-start="6.56" data-duration="0.06" data-track-index="11" data-volume="0.75" src="assets/sfx/ui/mouseclick1.ogg"></audio>
+      <audio id="sfx-key-1" class="clip" data-start="7.74" data-duration="0.25" data-track-index="11" data-volume="0.32" src="assets/sfx/keyboard/keypress-003.wav"></audio>
+      <audio id="sfx-key-2" class="clip" data-start="7.87" data-duration="0.25" data-track-index="12" data-volume="0.28" src="assets/sfx/keyboard/keypress-011.wav"></audio>
+      <audio id="sfx-key-3" class="clip" data-start="8.0" data-duration="0.25" data-track-index="11" data-volume="0.32" src="assets/sfx/keyboard/keypress-019.wav"></audio>
+      <audio id="sfx-key-4" class="clip" data-start="8.12" data-duration="0.25" data-track-index="12" data-volume="0.28" src="assets/sfx/keyboard/keypress-007.wav"></audio>
+      <audio id="sfx-key-5" class="clip" data-start="8.26" data-duration="0.25" data-track-index="11" data-volume="0.32" src="assets/sfx/keyboard/keypress-026.wav"></audio>
+      <audio id="sfx-key-6" class="clip" data-start="8.38" data-duration="0.25" data-track-index="12" data-volume="0.28" src="assets/sfx/keyboard/keypress-014.wav"></audio>
+      <audio id="sfx-key-7" class="clip" data-start="8.52" data-duration="0.2" data-track-index="11" data-volume="0.32" src="assets/sfx/keyboard/keypress-030.wav"></audio>
+      <audio id="sfx-send" class="clip" data-start="8.74" data-duration="0.11" data-track-index="11" data-volume="0.5" src="assets/sfx/interface/drop_001.ogg"></audio>
+      <audio id="sfx-plan-card" class="clip" data-start="9.29" data-duration="0.19" data-track-index="11" data-volume="0.5" src="assets/sfx/interface/drop_002.ogg"></audio>
+      <audio id="sfx-click-yes" class="clip" data-start="10.93" data-duration="0.06" data-track-index="11" data-volume="0.75" src="assets/sfx/ui/mouseclick1.ogg"></audio>
+      <audio id="sfx-fall" class="clip" data-start="11.0" data-duration="0.54" data-track-index="12" data-volume="0.6" src="assets/sfx/impact/impactSoft_heavy_003.ogg"></audio>
+      <audio id="sfx-opt-e" class="clip" data-start="15.29" data-duration="0.11" data-track-index="11" data-volume="0.45" src="assets/sfx/interface/drop_001.ogg"></audio>
+      <audio id="sfx-opt-a" class="clip" data-start="15.84" data-duration="0.19" data-track-index="11" data-volume="0.42" src="assets/sfx/interface/drop_002.ogg"></audio>
+      <audio id="sfx-opt-b" class="clip" data-start="16.38" data-duration="0.11" data-track-index="11" data-volume="0.42" src="assets/sfx/interface/drop_001.ogg"></audio>
+      <audio id="sfx-opt-c" class="clip" data-start="16.93" data-duration="0.19" data-track-index="11" data-volume="0.42" src="assets/sfx/interface/drop_002.ogg"></audio>
+      <audio id="sfx-click-approve" class="clip" data-start="17.47" data-duration="0.055" data-track-index="11" data-volume="0.75" src="assets/sfx/ui/click2.ogg"></audio>
+      <audio id="sfx-green" class="clip" data-start="17.53" data-duration="1.48" data-track-index="12" data-volume="0.55" src="assets/sfx/impact/impactBell_heavy_000.ogg"></audio>
+      <audio id="sfx-final" class="clip" data-start="22.93" data-duration="0.65" data-track-index="11" data-volume="0.4" src="assets/sfx/impact/impactBell_heavy_003.ogg"></audio>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>
