@@ -1,4 +1,4 @@
-import { formatDate, formatEur } from "../lib/format";
+import { creditLineHint, creditLineNote, formatDate, formatEur } from "../lib/format";
 import type { RescueOption } from "../types/api";
 import { Icon } from "./Icon";
 import { StatusChip } from "./StatusChip";
@@ -6,7 +6,10 @@ import { StatusChip } from "./StatusChip";
 interface Props {
   option: RescueOption;
   recommended: boolean;
-  aiComment: string | null;
+  /** Why this option is the recommended one; shown on the featured card only. */
+  rationale: string | null;
+  /** The engine's one-line verdict on this option (code-written, not AI text). */
+  comment: string | null;
   previewed: boolean;
   busy: boolean;
   disabled: boolean;
@@ -19,11 +22,40 @@ function costText(option: RescueOption): string {
   return option.cost_eur === 0 ? "No cost" : formatEur(option.cost_eur);
 }
 
-/** One rescue option: outcome, cost and the approve / reject actions. */
+/** Everything about an option that is not needed to decide at a glance, with the reject action. */
+function OptionDetails({ option, comment, busy, disabled, onReject }: Pick<Props, "option" | "comment" | "busy" | "disabled" | "onReject">) {
+  const creditNote = creditLineNote(option.credit_limit_eur, option.new_min_balance_eur);
+
+  return (
+    <details className="disclosure option__details">
+      <summary>
+        Details<span className="visually-hidden"> of option {option.id}</span>
+      </summary>
+      <div className="option__more">
+        <p>{option.description}</p>
+        <p>
+          Lowest balance on {formatDate(option.new_min_balance_date)}.{creditNote !== null ? ` ${creditNote}` : ""}
+        </p>
+        {option.cost_note !== null ? <p>Cost: {option.cost_note}</p> : null}
+        {option.non_financial_cost !== null ? <p>Other cost: {option.non_financial_cost}</p> : null}
+        {comment !== null ? <p className="option__comment">{comment}</p> : null}
+        {option.rejected ? null : (
+          <button type="button" className="btn btn--small" onClick={onReject} disabled={disabled}>
+            {busy ? "Saving…" : "Reject"}
+            <span className="visually-hidden"> option {option.id}</span>
+          </button>
+        )}
+      </div>
+    </details>
+  );
+}
+
+/** One rescue option: outcome, cost and approval at a glance; the rest and the reject action under "Details". */
 export function OptionCard({
   option,
   recommended,
-  aiComment,
+  rationale,
+  comment,
   previewed,
   busy,
   disabled,
@@ -32,11 +64,18 @@ export function OptionCard({
   onReject,
 }: Props) {
   const titleId = `option-${option.id}-title`;
-  const classes = ["option", previewed ? "is-previewed" : "", option.rejected ? "is-rejected" : ""];
+  const creditHint = creditLineHint(option.credit_limit_eur, option.new_min_balance_eur);
+  const previewLabel = previewed ? "Shown on chart" : "Preview on chart";
+  const classes = [
+    "option",
+    recommended ? "option--featured" : "",
+    previewed ? "is-previewed" : "",
+    option.rejected ? "is-rejected" : "",
+  ];
 
   return (
     <li>
-      <article className={classes.filter(Boolean).join(" ")} aria-labelledby={titleId} onFocus={onPreview}>
+      <article className={classes.filter(Boolean).join(" ")} aria-labelledby={titleId}>
         <header className="option__head">
           <span className="option__letter" aria-hidden="true">
             {option.id}
@@ -54,65 +93,50 @@ export function OptionCard({
           {option.rejected ? <span className="badge badge--rejected">Rejected</span> : null}
         </header>
 
-        <p className="option__description">{option.description}</p>
+        {recommended && rationale !== null ? (
+          <p className="option__reason">
+            <strong>Why option {option.id}:</strong> {rationale}
+          </p>
+        ) : null}
 
         <dl className="option__facts">
           <div>
             <dt>New lowest balance</dt>
             <dd>
               <span className="option__amount">{formatEur(option.new_min_balance_eur)}</span>
-              <span className="muted"> on {formatDate(option.new_min_balance_date)}</span>
-            </dd>
-          </div>
-          <div>
-            <dt>Result</dt>
-            <dd>
               <StatusChip status={option.new_status} />
+              {creditHint !== null ? <span className="option__hint">{creditHint}</span> : null}
             </dd>
           </div>
           <div>
             <dt>Cost</dt>
-            <dd>
-              <span className="option__amount">{costText(option)}</span>
-              {option.cost_note !== null ? <span className="muted"> · {option.cost_note}</span> : null}
-            </dd>
+            <dd className="option__amount">{costText(option)}</dd>
           </div>
-          {option.non_financial_cost !== null ? (
-            <div>
-              <dt>Other cost</dt>
-              <dd>{option.non_financial_cost}</dd>
-            </div>
-          ) : null}
         </dl>
 
-        {aiComment !== null ? (
-          <p className="option__comment">
-            <Icon name="sparkles" size={14} />
-            <span>
-              <span className="visually-hidden">AI comment: </span>
-              {aiComment}
-            </span>
-          </p>
-        ) : null}
-
         <div className="option__actions">
-          <button type="button" className="btn btn--ghost" aria-pressed={previewed} onClick={onPreview}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            aria-pressed={previewed}
+            aria-label={`${previewLabel}: option ${option.id}`}
+            onClick={onPreview}
+          >
             <Icon name="eye" size={14} />
-            {previewed ? "Shown on chart" : "Preview on chart"}
+            {previewLabel}
           </button>
-          <span className="option__decide">
-            {option.rejected ? null : (
-              <button type="button" className="btn" onClick={onReject} disabled={disabled}>
-                {busy ? "Saving…" : "Reject"}
-                <span className="visually-hidden"> option {option.id}</span>
-              </button>
-            )}
-            <button type="button" className="btn btn--primary" onClick={onApprove} disabled={disabled}>
-              Approve
-              <span className="visually-hidden"> option {option.id}</span>
-            </button>
-          </span>
+          <button
+            type="button"
+            className={recommended ? "btn btn--primary" : "btn"}
+            onClick={onApprove}
+            disabled={disabled}
+          >
+            Approve
+            <span className="visually-hidden"> option {option.id}</span>
+          </button>
         </div>
+
+        <OptionDetails option={option} comment={comment} busy={busy} disabled={disabled} onReject={onReject} />
       </article>
     </li>
   );

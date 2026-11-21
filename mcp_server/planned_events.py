@@ -1,10 +1,13 @@
-"""Planned events from the owner's chat: validation, the single write of this server, and listing.
+"""Planned events from the owner's chat: validation, the two writes of this server (insert, delete), listing.
 
 A planned event is a future fact the owner told the assistant about (a closure, a one-off expense or a
 one-off inflow). The forecast engine in the backend applies it; nothing here computes balances.
 
 Flow: ``propose_planned_event`` validates only, the owner confirms in the chat, then ``save_planned_event``
 validates again and inserts one row into ``planned_events`` (source ``chat``).
+
+Removing follows the same scheme: ``propose_planned_event_removal`` only looks the plan up, the owner confirms,
+then ``remove_planned_event`` deletes that one chat row, and only if the orchestrator listed its id as confirmed.
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import Enum
-from typing import Optional, Union
+from typing import Collection, Optional, Union
 
 import psycopg
 
@@ -26,13 +29,50 @@ MAX_UTTERANCE_CHARS = 1000
 MAX_LISTED_EVENTS = 50
 CHAT_SOURCE = "chat"
 
+# The forecast starts on the day after today (today's bookings are already in the bank balance), so an event
+# that is over by the end of today would be saved without changing any number.
+CLOSURE_ENDS_TODAY = ("A closure that ends today ({today}) changes nothing: the forecast starts tomorrow. "
+                      "Set date_to to tomorrow or later.")
+PAYMENT_DATED_TODAY = ("Today's ({today}) payments are already in the bank balance and the forecast starts "
+                       "tomorrow. Put tomorrow or a later date in date_from; ask the owner if unsure.")
+
+AGENT_EVENT_NOT_REMOVABLE = ("Planned event {id} ({description}) belongs to {origin} the owner approved, so it "
+                             "cannot be removed in the chat. Tell the owner to withdraw it with the \"{button}\" "
+                             "button next to it in the \"My plans\" list.")
+# What the owner approved to create an agent event, and the label of the button that withdraws it in the UI.
+RESCUE_OPTION_ORIGIN = {"origin": "a rescue option", "button": "Withdraw option"}
+ADVISOR_PROPOSAL_ORIGIN = {"origin": "a CFO recommendation", "button": "Withdraw recommendation"}
+UNKNOWN_EVENT = ("There is no planned event with id {id}. Call list_planned_events and use the id of the plan the "
+                 "owner means; if no plan matches, tell the owner so and name the plans that exist.")
+ALREADY_REMOVED = ("Planned event {id} is already gone from the plans; nothing was left to remove. Tell the owner "
+                   "that it is no longer in the plans.")
+REMOVAL_NOT_CONFIRMED = ("Planned event {id} was not removed: the owner has not confirmed its removal yet. Call "
+                         "propose_planned_event_removal with this id, ask the owner to confirm, and remove it only "
+                         "after the owner said yes.")
+
+# Events of the CFO advisors (backend/advisors), written by the backend when the owner approves a proposal. Their
+# columns do not read like a plain payment (the amount of a deposit comes back, a currency purchase replaces
+# later payments), so the listing explains each one in words. The forecast effect is computed by the backend only.
+TERM_DEPOSIT = "term_deposit"
+FX_PREBUY = "fx_prebuy"
+TAX_RESERVE_CATEGORY = "tax_reserve"
+TERM_DEPOSIT_SUMMARY = ("{purpose}: EUR {amount_eur:,.2f} is tied up in a term deposit with the bank from {date_from} "
+                        "until {date_to}, when it returns to the account with interest. The owner approved it; the "
+                        "forecast in the SITUATION already includes it.")
+TAX_RESERVE_PURPOSE = "Money set aside for income tax"
+INVESTMENT_PURPOSE = "Spare cash invested"
+FX_PREBUY_SUMMARY = ("Swiss francs bought in advance: one payment of EUR {amount_eur:,.2f} on {date_from} covers "
+                     "every Zurich instalment due up to {date_to}, so those instalments no longer leave the account. "
+                     "The owner approved it; the forecast in the SITUATION already includes it.")
+
 EVENT_COLUMNS = ("id, event_type, date_from, date_to, amount_eur, category, description, original_utterance, "
                  "source, as_of_date, decision_id, created_at")
 
 
 class EventType(str, Enum):
     """Event types the chat assistant may create (payment_deferral / credit_line come only from approved
-    rescue options and are written by the backend, never through this server)."""
+    rescue options, term_deposit / fx_prebuy only from approved CFO recommendations; the backend writes them,
+    never this server)."""
     CLOSURE = "closure"
     EXPENSE = "expense"
     INFLOW = "inflow"
@@ -83,12 +123,15 @@ def _dates(event_type: EventType, date_from: Optional[str], date_to: Optional[st
     today = as_of.isoformat()
     if d_from < as_of:
         raise ToolInputError(f"date_from {d_from.isoformat()} is before today ({today}). Planned events must be "
-                             f"today or later; check the year and ask the owner if unsure.")
+                             f"in the future; check the year and ask the owner if unsure.")
     if d_to < d_from:
         raise ToolInputError(f"date_to {d_to.isoformat()} is before date_from {d_from.isoformat()}.")
     if (d_from - as_of).days > MAX_DAYS_AHEAD:
         raise ToolInputError(f"date_from {d_from.isoformat()} is more than {MAX_DAYS_AHEAD} days after today "
                              f"({today}). Check the year.")
+    if d_to <= as_of:
+        message = CLOSURE_ENDS_TODAY if event_type is EventType.CLOSURE else PAYMENT_DATED_TODAY
+        raise ToolInputError(message.format(today=today))
     length = (d_to - d_from).days + 1
     if event_type is EventType.CLOSURE:
         if length > MAX_CLOSURE_DAYS:
@@ -137,15 +180,24 @@ def validate_event(as_of: date, event_type: str, date_from: Optional[str], date_
     )
 
 
+def _in_words(event_type: str, date_from: date, date_to: date, amount_eur: Union[Decimal, float, None]) -> str:
+    if event_type == EventType.CLOSURE.value:
+        days = (date_to - date_from).days + 1
+        return f"closure from {date_from.isoformat()} to {date_to.isoformat()} ({days} day{'s' if days != 1 else ''})"
+    return f"{event_type} of EUR {amount_eur:,.2f} on {date_from.isoformat()}"
+
+
 def confirmation_prompt(event: PlannedEvent) -> str:
     """The question to put to the owner before saving."""
-    if event.event_type is EventType.CLOSURE:
-        days = (event.date_to - event.date_from).days + 1
-        what = (f"closure from {event.date_from.isoformat()} to {event.date_to.isoformat()} "
-                f"({days} day{'s' if days != 1 else ''})")
-    else:
-        what = f"{event.event_type.value} of EUR {event.amount_eur:,.2f} on {event.date_from.isoformat()}"
+    what = _in_words(event.event_type.value, event.date_from, event.date_to, event.amount_eur)
     return f"I understood: {what} - {event.description}. Should I include it in the forecast?"
+
+
+def removal_confirmation_prompt(row: dict) -> str:
+    """The question to put to the owner before removing a saved plan (``row`` as returned by ``fetch_dicts``)."""
+    what = _in_words(row["event_type"], date.fromisoformat(row["date_from"]), date.fromisoformat(row["date_to"]),
+                     row["amount_eur"])
+    return f"You want to remove this plan: {what} - {row['description']}. Should I remove it from your plans?"
 
 
 # --------------------------------------------------------------------------- tools
@@ -190,14 +242,81 @@ def save_planned_event(conn: psycopg.Connection, as_of: date, event_type: str, d
     return {"saved": True, "event": rows[0]}
 
 
+def _event_id(value: Union[int, str, None]) -> int:
+    try:
+        return int(str(value).strip())
+    except ValueError as exc:
+        raise ToolInputError(f"event_id must be the numeric id of a plan from list_planned_events, got {value!r}.") from exc
+
+
+def _stored_event(conn: psycopg.Connection, event_id: int) -> Optional[dict]:
+    """The saved plan with this id, if it is a chat plan; a measure of an approved option or recommendation is
+    refused."""
+    rows = fetch_dicts(conn, f"SELECT {EVENT_COLUMNS} FROM planned_events WHERE id = %s", (event_id,))
+    if rows and rows[0]["source"] != CHAT_SOURCE:
+        raise ToolInputError(AGENT_EVENT_NOT_REMOVABLE.format(id=event_id, description=rows[0]["description"],
+                                                              **_approved_origin(rows[0]["event_type"])))
+    return rows[0] if rows else None
+
+
+def _approved_origin(event_type: str) -> dict[str, str]:
+    """What the owner approved to create an agent event of this type, and how the owner withdraws it."""
+    return ADVISOR_PROPOSAL_ORIGIN if event_type in (TERM_DEPOSIT, FX_PREBUY) else RESCUE_OPTION_ORIGIN
+
+
+def propose_planned_event_removal(conn: psycopg.Connection, event_id: Union[int, str, None]) -> dict:
+    """Look up the plan the owner wants to remove. Nothing is written."""
+    wanted = _event_id(event_id)
+    event = _stored_event(conn, wanted)
+    if event is None:
+        raise ToolInputError(UNKNOWN_EVENT.format(id=wanted))
+    return {"valid": True, "event": event, "confirmation_prompt": removal_confirmation_prompt(event)}
+
+
+def remove_planned_event(conn: psycopg.Connection, event_id: Union[int, str, None],
+                         confirmed_ids: Collection[int]) -> dict:
+    """Delete one chat plan. ``conn`` must be the read-write connection (db.connect_write).
+
+    ``confirmed_ids`` are the plans the owner was shown for removal (set by the orchestrator, not by the model);
+    any other id is refused before the database is touched. A confirmed plan that no longer exists (the request
+    was repeated, or the owner removed it in the app meanwhile) is reported as ``already_removed``, not as an
+    error: what the owner confirmed is true.
+    """
+    wanted = _event_id(event_id)
+    if wanted not in confirmed_ids:
+        raise ToolInputError(REMOVAL_NOT_CONFIRMED.format(id=wanted))
+    already_removed = {"removed": False, "already_removed": True, "event_id": wanted,
+                       "note": ALREADY_REMOVED.format(id=wanted)}
+    if _stored_event(conn, wanted) is None:
+        return already_removed
+    rows = fetch_dicts(conn, f"DELETE FROM planned_events WHERE id = %s AND source = %s RETURNING {EVENT_COLUMNS}",
+                       (wanted, CHAT_SOURCE))
+    if not rows:  # removed by someone else between the statements
+        return already_removed
+    return {"removed": True, "event": rows[0]}
+
+
 def list_planned_events(conn: psycopg.Connection, cutoff: Optional[date]) -> dict:
-    """Planned events that are ongoing or upcoming on the analysis date (all events when there is no cutoff)."""
+    """Planned events that still affect the forecast on the analysis date: they end after it, the same rule the
+    backend forecast applies (all events when there is no cutoff). An event of a CFO advisor carries a "summary"."""
     rows = fetch_dicts(conn, """
         SELECT id, event_type, date_from, date_to, amount_eur, category, description, source
-        FROM planned_events WHERE date_to >= %s
+        FROM planned_events WHERE date_to > %s
         ORDER BY date_from, id LIMIT %s""", (cutoff or date.min, MAX_LISTED_EVENTS + 1))
-    out = {"analysis_date": cutoff.isoformat() if cutoff else None, "events": rows[:MAX_LISTED_EVENTS]}
+    out = {"analysis_date": cutoff.isoformat() if cutoff else None,
+           "events": [_with_advisor_summary(row) for row in rows[:MAX_LISTED_EVENTS]]}
     if len(rows) > MAX_LISTED_EVENTS:
         out["notes"] = [f"Only the first {MAX_LISTED_EVENTS} events are shown."]
     return out
+
+
+def _with_advisor_summary(row: dict) -> dict:
+    """The listed row, with a "summary" in plain words when it is a term deposit or an advance currency purchase."""
+    event_type = row.get("event_type")
+    if event_type == TERM_DEPOSIT:
+        purpose = TAX_RESERVE_PURPOSE if row["category"] == TAX_RESERVE_CATEGORY else INVESTMENT_PURPOSE
+        return {**row, "summary": TERM_DEPOSIT_SUMMARY.format(purpose=purpose, **row)}
+    if event_type == FX_PREBUY:
+        return {**row, "summary": FX_PREBUY_SUMMARY.format(**row)}
+    return row
 

@@ -1,7 +1,5 @@
 import type { EventType, RiskStatus } from "../types/api";
 
-const DAY_MS = 86_400_000;
-
 const eur = new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" });
 const eurWhole = new Intl.NumberFormat("en-IE", {
   style: "currency",
@@ -55,7 +53,7 @@ export function formatDate(isoDate: string): string {
 }
 
 /** "3 Jul" */
-export function formatShortDate(isoDate: string): string {
+function formatShortDate(isoDate: string): string {
   return shortDate.format(dateToTime(isoDate));
 }
 
@@ -73,16 +71,34 @@ export function formatDateTime(isoTimestamp: string): string {
   return dateTime.format(new Date(isoTimestamp));
 }
 
-/** Whole days from one YYYY-MM-DD date to another (inclusive of neither end). */
-export function daysBetween(from: string, to: string): number {
-  return Math.round((dateToTime(to) - dateToTime(from)) / DAY_MS);
-}
-
 export function formatDaysFromNow(days: number): string {
   if (days <= 0) return "today";
   if (days === 1) return "in 1 day";
   if (days < 14) return `in ${days} days`;
   return `in about ${Math.round(days / 7)} weeks`;
+}
+
+/**
+ * Explains a negative lowest balance that a credit line absorbs, e.g. why "-€15,728" can be "On track".
+ * Null when there is no credit line or the balance never goes below zero.
+ */
+export function creditLineNote(creditLimit: number | null, lowestBalance: number): string | null {
+  if (creditLimit === null || lowestBalance >= 0) return null;
+  const unused = creditLimit + lowestBalance;
+  return unused >= 0
+    ? `Covered by the ${formatEurWhole(creditLimit)} credit line; ${formatEurWhole(unused)} of it stays unused at the lowest point.`
+    : `${formatEurWhole(-unused)} more than the ${formatEurWhole(creditLimit)} credit line covers.`;
+}
+
+/**
+ * The short form of `creditLineNote` for a row of figures: says at a glance why a negative balance can be
+ * "On track". Null when there is no credit line or the balance never goes below zero.
+ */
+export function creditLineHint(creditLimit: number | null, lowestBalance: number): string | null {
+  if (creditLimit === null || lowestBalance >= 0) return null;
+  return creditLimit + lowestBalance >= 0
+    ? `within the ${formatEurWhole(creditLimit)} credit line`
+    : `beyond the ${formatEurWhole(creditLimit)} credit line`;
 }
 
 export const STATUS_LABELS: Record<RiskStatus, string> = {
@@ -97,6 +113,8 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   inflow: "Planned inflow",
   payment_deferral: "Deferred payment",
   credit_line: "Credit line",
+  term_deposit: "Term deposit",
+  fx_prebuy: "CHF purchase",
 };
 
 /** "get_cash_kpis" → "cash kpis"; makes MCP tool names readable in the "data used" line. */

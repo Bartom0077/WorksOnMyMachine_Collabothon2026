@@ -1,6 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { type ApiError, api, toApiError } from "../api/client";
-import type { DecisionStatus, RescueOption, ScenarioParams } from "../types/api";
+import type { Dashboard, DecisionStatus, RescueOption } from "../types/api";
+
+/** The server no longer offers the option: the board on screen is out of date. */
+const OPTION_NOT_AVAILABLE = "option_not_available";
 
 export interface DecisionOutcome {
   optionId: string;
@@ -9,9 +12,11 @@ export interface DecisionOutcome {
 }
 
 export interface DecisionFlow {
-  /** The option waiting for the owner's explicit confirmation. */
+  /** The option waiting for the owner's explicit confirmation, as offered by the dashboard on screen. */
   awaitingApproval: RescueOption | null;
   busyOptionId: string | null;
+  /** False while the dashboard on screen is being recalculated or failed to reload; decisions wait until it is current. */
+  canDecide: boolean;
   error: ApiError | null;
   /** Execution messages of the most recent approval. */
   outcome: DecisionOutcome | null;
@@ -23,29 +28,49 @@ export interface DecisionFlow {
   dismissError: () => void;
 }
 
-/** Approve (with a confirmation step) or reject a rescue option via POST /decisions. */
+/**
+ * Approve (with a confirmation step) or reject a rescue option via POST /decisions.
+ *
+ * A decision always refers to `board`, the dashboard the owner is looking at: its scenario is what gets
+ * posted, so the figures confirmed on screen are the ones the server records.
+ */
 export function useDecisionFlow(
-  params: ScenarioParams,
+  board: Dashboard | null,
+  boardIsCurrent: boolean,
   llmExplanation: string | null,
   onDecided: () => void,
 ): DecisionFlow {
-  const [awaitingApproval, setAwaitingApproval] = useState<RescueOption | null>(null);
+  const [awaitingOptionId, setAwaitingOptionId] = useState<string | null>(null);
   const [busyOptionId, setBusyOptionId] = useState<string | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [outcome, setOutcome] = useState<DecisionOutcome | null>(null);
 
+  // Looked up in the board on screen, so the dialog never shows figures of a dashboard that was replaced
+  // and closes by itself when the option is no longer offered.
+  const awaitingApproval = board?.options.find((option) => option.id === awaitingOptionId) ?? null;
+  const canDecide = board !== null && boardIsCurrent && busyOptionId === null;
+
+  // Forget a confirmation whose option disappeared, so it cannot reopen if a later board offers that id again.
+  useEffect(() => {
+    if (awaitingOptionId !== null && board !== null && awaitingApproval === null) setAwaitingOptionId(null);
+  }, [awaitingOptionId, board, awaitingApproval]);
+
   const decide = useCallback(
     async (option: RescueOption, status: DecisionStatus) => {
+      if (board === null || !canDecide) return;
+      const { as_of_date, horizon_days, buffer_eur } = board;
       setBusyOptionId(option.id);
       setError(null);
       try {
         const response = await api.postDecision({
-          ...params,
+          as_of_date,
+          horizon_days,
+          buffer_eur,
           option_id: option.id,
           status,
           llm_explanation: llmExplanation,
         });
-        setAwaitingApproval(null);
+        setAwaitingOptionId(null);
         setOutcome(
           status === "approved"
             ? { optionId: option.id, optionTitle: option.title, messages: response.execution_messages }
@@ -53,22 +78,24 @@ export function useDecisionFlow(
         );
         onDecided();
       } catch (caught) {
-        setError(toApiError(caught));
+        const apiError = toApiError(caught);
+        setError(apiError);
+        if (apiError.code === OPTION_NOT_AVAILABLE) onDecided();
       } finally {
         setBusyOptionId(null);
       }
     },
-    [params, llmExplanation, onDecided],
+    [board, canDecide, llmExplanation, onDecided],
   );
 
   const requestApproval = useCallback((option: RescueOption) => {
     setError(null);
-    setAwaitingApproval(option);
+    setAwaitingOptionId(option.id);
   }, []);
 
   const cancelApproval = useCallback(() => {
     setError(null);
-    setAwaitingApproval(null);
+    setAwaitingOptionId(null);
   }, []);
 
   const confirmApproval = useCallback(() => {
@@ -82,6 +109,7 @@ export function useDecisionFlow(
   return {
     awaitingApproval,
     busyOptionId,
+    canDecide,
     error,
     outcome,
     requestApproval,

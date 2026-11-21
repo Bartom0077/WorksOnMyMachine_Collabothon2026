@@ -1,5 +1,8 @@
 /** Contract-shaped fixtures for the mocked specs. Values follow the demo story (as of 2025-05-10). */
 import type {
+  AdviceProposal,
+  AdviceRecommendation,
+  AdviceResponse,
   BalancePoint,
   ChatResponse,
   Dashboard,
@@ -11,10 +14,10 @@ import type {
 } from "../../src/types/api";
 
 const DAY_MS = 86_400_000;
-export const AS_OF_DATE = "2025-05-10";
-export const CURRENT_BALANCE = 3205.69;
-export const MIN_BALANCE = -22097.6;
-export const MIN_DATE = "2025-07-03";
+const AS_OF_DATE = "2025-05-10";
+const CURRENT_BALANCE = 3205.69;
+const MIN_BALANCE = -22097.6;
+const MIN_DATE = "2025-07-03";
 
 type Anchor = [date: string, balance: number];
 
@@ -144,15 +147,15 @@ export const ovenEvent: PlannedEvent = {
   created_at: "2025-05-10T09:20:00Z",
 };
 
-export const agentEvents: PlannedEvent[] = [
+const agentEvents: PlannedEvent[] = [
   {
     id: 21,
     event_type: "payment_deferral",
     date_from: "2025-05-15",
-    date_to: "2025-07-03",
-    amount_eur: null,
+    date_to: "2025-07-15",
+    amount_eur: 5000,
     category: "investment_outflow",
-    description: "Transfers to Zurich postponed by two months",
+    description: "Transfer to Zurich (Luigi): payment of 15 May postponed to 15 July",
     original_utterance: null,
     source: "agent",
     as_of_date: AS_OF_DATE,
@@ -175,7 +178,7 @@ export const agentEvents: PlannedEvent[] = [
   },
 ];
 
-export const options: RescueOption[] = [
+const options: RescueOption[] = [
   {
     id: "A",
     title: "Credit line",
@@ -331,7 +334,7 @@ export const approvedDashboard: Dashboard = {
 export const llmRecommendation: Recommendation = {
   source: "llm",
   fallback_reason: null,
-  headline: "In about 8 weeks you will be roughly €22,000 short on your account.",
+  headline: redDashboard.headline,
   explanation:
     "For three weeks in June there is no revenue, while salaries, rent and the transfers to Luigi still have to be paid.",
   recommended_option_id: "E",
@@ -345,7 +348,7 @@ export const llmRecommendation: Recommendation = {
 export const greenRecommendation: Recommendation = {
   source: "llm",
   fallback_reason: null,
-  headline: "You are on track for the next 60 days.",
+  headline: greenDashboard.headline,
   explanation: "Revenue comfortably covers your fixed costs and no unusual payments are planned.",
   recommended_option_id: null,
   rationale: "",
@@ -379,12 +382,14 @@ export const approvedDecision: Decision = {
     "Transfers to Zurich on 15 May and 15 June postponed by two months (simulated).",
   ],
   decided_at: "2025-05-10T09:30:00Z",
+  withdrawn_at: null,
   snapshot: {
     status_before: "RED",
     min_balance_before_eur: MIN_BALANCE,
     min_balance_date_before: MIN_DATE,
     status_after: "GREEN",
     min_balance_after_eur: -10097.6,
+    credit_limit_after_eur: 15000,
   },
 };
 
@@ -396,7 +401,7 @@ export const rejectedDecision: Decision = {
   option_description: "Hold the two €6,000 transfers due in the risk window and pay them two months later.",
   status: "rejected",
   execution_messages: [],
-  snapshot: { ...approvedDecision.snapshot, status_after: "RED" },
+  snapshot: { ...approvedDecision.snapshot, status_after: "RED", credit_limit_after_eur: null },
 };
 
 export const chatProposal: ChatResponse = {
@@ -412,6 +417,8 @@ export const chatProposal: ChatResponse = {
     },
   ],
   saved_events: [],
+  pending_removals: [],
+  removed_events: [],
   tool_calls: [{ name: "propose_planned_event", ok: true }],
   events_changed: false,
 };
@@ -421,9 +428,354 @@ export const chatSaved: ChatResponse = {
   reply: "Done. The closure is now part of your forecast, and it creates a shortfall in early July.",
   pending_events: [],
   saved_events: [closureEvent],
+  pending_removals: [],
+  removed_events: [],
   tool_calls: [
     { name: "save_planned_event", ok: true },
     { name: "get_cash_kpis", ok: true },
   ],
   events_changed: true,
 };
+
+export const chatRemovalProposal: ChatResponse = {
+  conversation_id: "conv-2",
+  reply: "I found this plan: New pizza oven, €8,000.00 on 10 June 2025. Shall I remove it from your plans?",
+  pending_events: [],
+  saved_events: [],
+  pending_removals: [ovenEvent],
+  removed_events: [],
+  tool_calls: [
+    { name: "list_planned_events", ok: true },
+    { name: "propose_planned_event_removal", ok: true },
+  ],
+  events_changed: false,
+};
+
+export const chatRemoved: ChatResponse = {
+  conversation_id: "conv-2",
+  reply: "Done. The oven purchase is no longer part of your forecast.",
+  pending_events: [],
+  saved_events: [],
+  pending_removals: [],
+  removed_events: [ovenEvent],
+  tool_calls: [{ name: "remove_planned_event", ok: true }],
+  events_changed: true,
+};
+
+export const chatRemovalKept: ChatResponse = {
+  conversation_id: "conv-2",
+  reply: "All right, the plan stays in your forecast.",
+  pending_events: [],
+  saved_events: [],
+  pending_removals: [],
+  removed_events: [],
+  tool_calls: [],
+  events_changed: false,
+};
+
+// ---------- CFO recommendations ----------
+
+const scenario = { as_of_date: AS_OF_DATE, horizon_days: 60, buffer_eur: 3000 } as const;
+
+/** The default (RED) scenario: liquidity comes first, so the tax advisor only gives advice. */
+export const redAdvice: AdviceResponse = {
+  ...scenario,
+  status: "RED",
+  liquidity_first: true,
+  surplus_eur: 0,
+  proposals: [
+    {
+      id: "T2",
+      agent: "tax",
+      action_type: "advice",
+      title: "Set money aside for income tax once your balance recovers",
+      description:
+        "Your profit this year is ahead of the profit your tax prepayments are based on, so about €2,340 of income tax is not covered yet. Solve the cash gap first, then start putting this amount aside.",
+      amount_eur: null,
+      date_from: null,
+      date_to: null,
+      interest_eur: null,
+      risk_removed_eur: null,
+      effect: "No money moves now, so your forecast stays as it is.",
+      assumptions: ["The tax estimate uses the rate implied by your current prepayments."],
+      simulated_actions: ["Reminder to build a tax reserve of €2,340 noted (simulated)."],
+      fingerprint: "fp-t2-1",
+      new_min_balance_eur: MIN_BALANCE,
+      new_min_balance_date: MIN_DATE,
+      new_status: "RED",
+      forecast: redLine,
+    },
+  ],
+  suppressed: [
+    {
+      id: "T1",
+      agent: "tax",
+      action_type: "tax_reserve",
+      reason_code: "liquidity_first",
+      reason: "A liquidity problem is open: no cash is tied up.",
+    },
+  ],
+};
+
+export const redAdviceRecommendation: AdviceRecommendation = {
+  summary: {
+    source: "llm",
+    fallback_reason: null,
+    headline: "Fix the cash gap first, then think about tax",
+    text: "Your income tax for this year will be higher than your prepayments, but there is no spare cash to put aside yet.",
+  },
+  agents: [{ agent: "tax", source: "llm", fallback_reason: null, tips: [] }],
+  proposals: {
+    T2: {
+      title: "Start a tax reserve once the cash gap is closed",
+      explanation: "About €2,340 of this year's income tax is not covered by your prepayments. Put it aside as soon as the balance allows.",
+      recommended: true,
+    },
+  },
+};
+
+const SURPLUS_BALANCE = 33205.69;
+const SURPLUS_MIN_BALANCE = 30240.3;
+const SURPLUS_MIN_DATE = "2025-05-15";
+const DEPOSIT_OPENING = "2025-05-11";
+const TAX_RESERVE = 5214.37;
+const TAX_RESERVE_INTEREST = 8.86;
+const INVESTMENT_DEPOSIT = 21000;
+
+const surplusLine = shift(greenLine, DEPOSIT_OPENING, SURPLUS_BALANCE - CURRENT_BALANCE);
+const taxReserveLine = shift(
+  shift(surplusLine, DEPOSIT_OPENING, -TAX_RESERVE),
+  "2025-06-11",
+  TAX_RESERVE + TAX_RESERVE_INTEREST,
+);
+const investmentLine = shift(surplusLine, DEPOSIT_OPENING, -INVESTMENT_DEPOSIT);
+
+/** A comfortable GREEN outlook with spare cash, the stage for cash-blocking recommendations. */
+export const surplusDashboard: Dashboard = {
+  ...greenDashboard,
+  current_balance_eur: SURPLUS_BALANCE,
+  history: shift(history, "2025-02-10", SURPLUS_BALANCE - CURRENT_BALANCE),
+  forecast: { days: toForecastDays(surplusLine, SURPLUS_BALANCE), daily_averages: dailyAverages },
+  risk: {
+    ...greenDashboard.risk,
+    min_balance_eur: SURPLUS_MIN_BALANCE,
+    min_balance_date: SURPLUS_MIN_DATE,
+    days_until_min: 5,
+  },
+  insights: [{ ...(greenDashboard.insights[0] as Dashboard["insights"][number]), amount_eur: 27000 }],
+};
+
+/** The lowest balance with the tax reserve and the investment deposit approved together. */
+export const SURPLUS_COMBINED_MIN_BALANCE = round2(SURPLUS_MIN_BALANCE - TAX_RESERVE - INVESTMENT_DEPOSIT);
+
+const unchangedForecast = {
+  new_min_balance_eur: SURPLUS_MIN_BALANCE,
+  new_min_balance_date: SURPLUS_MIN_DATE,
+  new_status: "GREEN",
+  forecast: surplusLine,
+} satisfies Partial<AdviceProposal>;
+
+/** GREEN with a surplus: a tax reserve, tax advice, an FX forward and an investment deposit, in any combination. */
+export const surplusAdvice: AdviceResponse = {
+  ...scenario,
+  status: "GREEN",
+  liquidity_first: false,
+  surplus_eur: 27000,
+  proposals: [
+    {
+      id: "T1",
+      agent: "tax",
+      action_type: "tax_reserve",
+      title: "Tax reserve deposit of €5,214",
+      description: "Put €5,214.37 into a one-month deposit so the income tax your prepayments do not cover is ready when it falls due.",
+      amount_eur: TAX_RESERVE,
+      date_from: DEPOSIT_OPENING,
+      date_to: "2025-06-11",
+      interest_eur: TAX_RESERVE_INTEREST,
+      risk_removed_eur: null,
+      effect: "The money leaves your account on 11 May and returns with interest on 11 June.",
+      assumptions: ["Deposit rate of 2% a year (illustrative, not a bank quote).", "Deposit term of one month."],
+      simulated_actions: ["Term deposit of €5,214.37 opened with Commerzbank as a tax reserve (simulated)."],
+      fingerprint: "fp-t1-2",
+      new_min_balance_eur: round2(SURPLUS_MIN_BALANCE - TAX_RESERVE),
+      new_min_balance_date: SURPLUS_MIN_DATE,
+      new_status: "GREEN",
+      forecast: taxReserveLine,
+    },
+    {
+      id: "T2",
+      agent: "tax",
+      action_type: "advice",
+      title: "Ask for higher tax prepayments",
+      description: "Your prepayments are based on a lower profit than you are making. Ask your tax adviser to have them raised.",
+      amount_eur: null,
+      date_from: null,
+      date_to: null,
+      interest_eur: null,
+      risk_removed_eur: null,
+      effect: "No money moves now, so your forecast stays as it is.",
+      assumptions: [],
+      simulated_actions: ["Request to raise the quarterly tax prepayments noted (simulated)."],
+      fingerprint: "fp-t2-3",
+      ...unchangedForecast,
+    },
+    {
+      id: "F2",
+      agent: "fx",
+      action_type: "fx_forward",
+      title: "Fix the exchange rate for the transfers to Zurich",
+      description: "Agree a forward contract so the eight remaining CHF transfers cost the same in euros whatever the rate does.",
+      amount_eur: null,
+      date_from: null,
+      date_to: "2025-12-15",
+      interest_eur: null,
+      risk_removed_eur: 400,
+      effect: "Your forecast stays as it is; the euro cost of the transfers can no longer change.",
+      assumptions: ["Forward rate equal to the last rate you paid, 1.046 EUR/CHF (no forward points)."],
+      simulated_actions: ["Forward contract for 33,333.36 CHF at 1.046 EUR/CHF requested from Commerzbank (simulated)."],
+      fingerprint: "fp-f2-4",
+      ...unchangedForecast,
+    },
+    {
+      id: "I1",
+      agent: "investment",
+      action_type: "term_deposit",
+      title: "Investment deposit of €21,000",
+      description: "Put €21,000.00 you do not need for the next six months into a term deposit.",
+      amount_eur: INVESTMENT_DEPOSIT,
+      date_from: DEPOSIT_OPENING,
+      date_to: "2025-11-11",
+      interest_eur: 211.73,
+      risk_removed_eur: null,
+      effect: "The money leaves your account on 11 May and returns with interest on 11 November.",
+      assumptions: ["Deposit rate of 2% a year (illustrative, not a bank quote)."],
+      simulated_actions: ["Term deposit of €21,000.00 opened with Commerzbank for six months (simulated)."],
+      fingerprint: "fp-i1-5",
+      new_min_balance_eur: round2(SURPLUS_MIN_BALANCE - INVESTMENT_DEPOSIT),
+      new_min_balance_date: SURPLUS_MIN_DATE,
+      new_status: "GREEN",
+      forecast: investmentLine,
+    },
+  ],
+  suppressed: [],
+};
+
+export const surplusAdviceRecommendation: AdviceRecommendation = {
+  summary: {
+    source: "llm",
+    fallback_reason: null,
+    headline: "Cover the tax bill and put the rest to work",
+    text: "You have €27,000 more than you need. Reserve the income tax first, then let the remaining cash earn interest.",
+  },
+  agents: [
+    {
+      agent: "tax",
+      source: "llm",
+      fallback_reason: null,
+      tips: [{ title: "Keep the reserve separate.", text: "Money in the everyday account tends to get spent." }],
+    },
+    { agent: "fx", source: "llm", fallback_reason: null, tips: [] },
+    { agent: "investment", source: "llm", fallback_reason: null, tips: [] },
+  ],
+  proposals: {
+    T1: {
+      title: "Reserve the income tax now",
+      explanation: "Setting €5,214.37 aside today means the tax bill cannot surprise you later.",
+      recommended: true,
+    },
+    T2: {
+      title: "Have your prepayments raised",
+      explanation: "Higher prepayments spread the tax over the year instead of one large bill.",
+      recommended: false,
+    },
+    F2: {
+      title: "Lock in the Zurich exchange rate",
+      explanation: "The possible swing is only €400.00, so this is about certainty rather than savings.",
+      recommended: false,
+    },
+    I1: {
+      title: "Let €21,000 earn interest",
+      explanation: "This cash is not needed in the next six months and earns €211.73 in a deposit.",
+      recommended: true,
+    },
+  },
+};
+
+/** What the backend answers when the language model is unavailable: the code texts, nothing added. */
+export function fallbackAdviceRecommendation(advice: AdviceResponse): AdviceRecommendation {
+  const reason = "The language model did not respond in time.";
+  return {
+    summary: {
+      source: "fallback",
+      fallback_reason: reason,
+      headline: "Recommendations for your spare cash",
+      text: "These recommendations are calculated from your bank transactions and can be approved in any combination.",
+    },
+    agents: [...new Set(advice.proposals.map((proposal) => proposal.agent))].map((agent) => ({
+      agent,
+      source: "fallback",
+      fallback_reason: reason,
+      tips: [],
+    })),
+    proposals: Object.fromEntries(
+      advice.proposals.map(({ id, title, description }) => [id, { title, explanation: description, recommended: true }]),
+    ),
+  };
+}
+
+/** Nothing on offer and nothing to say: the backend answers with the code text without calling the model. */
+export const noAdvice: AdviceResponse = { ...redAdvice, liquidity_first: false, proposals: [], suppressed: [] };
+
+export const noAdviceRecommendation: AdviceRecommendation = {
+  summary: {
+    source: "fallback",
+    fallback_reason: null,
+    headline: "No further recommendations right now.",
+    text: "No further recommendations right now.",
+  },
+  agents: [],
+  proposals: {},
+};
+
+/** The decision the backend records for one approved or rejected recommendation. */
+export function adviceDecision(id: number, proposal: AdviceProposal, status: Decision["status"]): Decision {
+  return {
+    id,
+    ...scenario,
+    option_id: proposal.id,
+    option_title: proposal.title,
+    option_description: proposal.description,
+    status,
+    execution: "SIMULATED",
+    llm_explanation: null,
+    execution_messages: status === "approved" ? proposal.simulated_actions : [],
+    decided_at: "2025-05-10T11:00:00Z",
+    withdrawn_at: null,
+    snapshot: {
+      status_before: "GREEN",
+      min_balance_before_eur: SURPLUS_MIN_BALANCE,
+      min_balance_date_before: SURPLUS_MIN_DATE,
+      status_after: "GREEN",
+      min_balance_after_eur: proposal.new_min_balance_eur,
+      credit_limit_after_eur: null,
+    },
+  };
+}
+
+/** The planned event the backend creates for an approved deposit. */
+export function depositEvent(id: number, proposal: AdviceProposal): PlannedEvent {
+  return {
+    id,
+    event_type: "term_deposit",
+    date_from: proposal.date_from ?? AS_OF_DATE,
+    date_to: proposal.date_to ?? AS_OF_DATE,
+    amount_eur: proposal.amount_eur,
+    category: proposal.action_type === "tax_reserve" ? "tax_reserve" : "investment",
+    description: proposal.title,
+    original_utterance: null,
+    source: "agent",
+    as_of_date: AS_OF_DATE,
+    decision_id: id,
+    created_at: "2025-05-10T11:00:00Z",
+  };
+}

@@ -1,5 +1,5 @@
 import type { DecisionFlow } from "../hooks/useDecisionFlow";
-import { formatDate, formatEur } from "../lib/format";
+import { creditLineNote, formatDate, formatEur } from "../lib/format";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { StatusChip } from "./StatusChip";
 
@@ -10,6 +10,7 @@ interface Props {
 /** Explicit confirmation before an option is approved; makes clear that execution is simulated. */
 export function ApprovalDialog({ decisions }: Props) {
   const option = decisions.awaitingApproval;
+  const creditNote = option ? creditLineNote(option.credit_limit_eur, option.new_min_balance_eur) : null;
 
   return (
     <ConfirmDialog
@@ -18,6 +19,7 @@ export function ApprovalDialog({ decisions }: Props) {
       confirmLabel="Approve (simulated)"
       busyLabel="Approving…"
       busy={decisions.busyOptionId !== null}
+      blockedLabel={decisions.canDecide || decisions.busyOptionId !== null ? undefined : "Recalculating…"}
       error={decisions.error}
       onConfirm={decisions.confirmApproval}
       onCancel={decisions.cancelApproval}
@@ -29,9 +31,10 @@ export function ApprovalDialog({ decisions }: Props) {
             This is a demonstration. No real payment, transfer or credit request will be made.
           </p>
           <p>
-            Your lowest projected balance becomes <strong>{formatEur(option.new_min_balance_eur)}</strong> on{" "}
+            Your lowest projected balance becomes <strong className="dialog__figure">{formatEur(option.new_min_balance_eur)}</strong> on{" "}
             {formatDate(option.new_min_balance_date)} <StatusChip status={option.new_status} />
           </p>
+          {creditNote !== null ? <p className="muted">{creditNote}</p> : null}
           {option.simulated_actions.length > 0 ? (
             <>
               <p className="dialog__label">What will be simulated</p>

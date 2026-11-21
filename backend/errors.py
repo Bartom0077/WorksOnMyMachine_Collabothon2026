@@ -43,6 +43,11 @@ class OptionNotAvailableError(ApiError):
     code = "option_not_available"
 
 
+class ProposalNotAvailableError(ApiError):
+    status_code = 409
+    code = "proposal_not_available"
+
+
 class DataUnavailableError(ApiError):
     status_code = 503
     code = "data_unavailable"

@@ -1,5 +1,5 @@
 """Module 2: ledger balance, recurring payments, averages and the day-by-day forecast."""
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -92,18 +92,56 @@ def test_month_end_dates_are_clamped():
 
 
 def test_daily_averages_use_open_days_only():
-    entries = [
-        _entry(date(2025, 5, 9), "1000", "card_revenue_debit"),
-        _entry(date(2025, 5, 9), "500", "card_revenue_credit"),
-        _entry(date(2025, 5, 10), "500", "card_revenue_debit"),
-        _entry(date(2025, 5, 10), "-600", "supplier_invoices"),
+    open_days = [AS_OF - timedelta(days=2 * offset) for offset in range(14)]   # every other day: 14 open days
+    entries = [_entry(day, "1000", "card_revenue_debit") for day in open_days] + [
+        _entry(AS_OF, "400", "card_revenue_credit"),
+        _entry(AS_OF, "-4200", "supplier_invoices"),
         _entry(date(2025, 4, 12), "9999", "card_revenue_debit"),   # outside the 28-day window
         _entry(date(2025, 5, 8), "-3800", "rent"),                 # fixed cost: ignored
     ]
     averages = daily_averages(entries, AS_OF)
-    assert (averages.open_days, averages.lookback_days) == (2, 28)
-    assert averages.revenue_eur == Decimal("1000.00")
+    assert (averages.open_days, averages.lookback_days) == (14, 28)
+    assert averages.revenue_eur == Decimal("1028.57")              # 14,400 / 14 open days
     assert averages.variable_costs_eur == Decimal("300.00")
+
+
+def test_daily_averages_look_further_back_when_the_window_has_too_few_open_days():
+    """A long closure: only one open day in the last 28 days, so the window grows back to 14 open days."""
+    before_closure = [date(2025, 3, 1) + timedelta(days=offset) for offset in range(20)]   # 1–20 March
+    entries = [_entry(day, "1000", "card_revenue_debit") for day in before_closure] + [
+        _entry(AS_OF, "300", "card_revenue_debit"),
+        _entry(date(2025, 3, 10), "-2800", "supplier_invoices"),
+        _entry(date(2025, 3, 2), "-9999", "supplier_invoices"),    # before the extended window
+    ]
+    averages = daily_averages(entries, AS_OF)
+    assert averages.open_days == 14                                 # 10 May plus 8–20 March
+    assert averages.lookback_days == (AS_OF - date(2025, 3, 8)).days + 1
+    assert averages.revenue_eur == Decimal("950.00")                # (13 × 1,000 + 300) / 14
+    assert averages.variable_costs_eur == Decimal("200.00")
+
+
+@pytest.mark.parametrize("as_of", [date(2025, 6, 15), date(2025, 6, 27), date(2025, 6, 28), date(2025, 6, 30),
+                                   date(2025, 7, 1), date(2025, 7, 3)])
+def test_real_closure_does_not_spoil_the_averages(ledger, as_of):
+    """The pizzeria was really closed in June 2025: the averages must stay representative during and after it."""
+    averages = daily_averages(ledger, as_of)
+    assert averages.open_days >= 14
+    assert Decimal("1000") < averages.revenue_eur < Decimal("2000")
+    assert Decimal("500") < averages.variable_costs_eur < Decimal("1000")
+
+
+def test_deferred_instalment_is_skipped_without_ending_the_commitment():
+    """The May and June tranches were postponed and really not paid: the later tranches are still expected."""
+    last = _entry(date(2025, 4, 15), "-4333.34", "investment_outflow", "Luigi", "Capital Tranche 04/12")
+    deferred = frozenset({("investment_outflow", date(2025, 5, 15)), ("investment_outflow", date(2025, 6, 15))})
+    end = date(2025, 9, 30)
+    for as_of in (date(2025, 5, 16), date(2025, 5, 26), date(2025, 6, 20)):
+        payments = project_recurring([last], as_of, end, deferred)
+        assert [payment.date for payment in payments] == [date(2025, 7, 15), date(2025, 8, 15), date(2025, 9, 15)]
+    # without the deferral the missing May payment ends the commitment after the grace period
+    assert project_recurring([last], date(2025, 5, 26), end) == []
+    overdue = project_recurring([last], date(2025, 5, 16), end)[0]
+    assert (overdue.date, overdue.due) == (date(2025, 5, 17), date(2025, 5, 15))
 
 
 def test_no_open_days_gives_zero_averages():

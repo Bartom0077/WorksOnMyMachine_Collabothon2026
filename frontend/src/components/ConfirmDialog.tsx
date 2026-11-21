@@ -8,6 +8,8 @@ interface Props {
   confirmLabel: string;
   busyLabel: string;
   busy: boolean;
+  /** Blocks confirming (but not cancelling), with the reason shown on the confirm button. */
+  blockedLabel?: string;
   error: ApiError | null;
   danger?: boolean;
   children: ReactNode;
@@ -22,6 +24,7 @@ export function ConfirmDialog({
   confirmLabel,
   busyLabel,
   busy,
+  blockedLabel,
   error,
   danger = false,
   children,
@@ -61,9 +64,9 @@ export function ConfirmDialog({
           type="button"
           className={`btn ${danger ? "btn--danger" : "btn--primary"}`}
           onClick={onConfirm}
-          disabled={busy}
+          disabled={busy || blockedLabel !== undefined}
         >
-          {busy ? busyLabel : confirmLabel}
+          {busy ? busyLabel : (blockedLabel ?? confirmLabel)}
         </button>
       </div>
     </dialog>

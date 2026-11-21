@@ -9,7 +9,7 @@ import service
 from app import create_app
 from deps import get_repository
 from domain import DashboardQuery
-from fakes import closure
+from fakes import closure, expense
 from kpi_engine.repository import RepositoryError
 
 PARAMS = {"as_of_date": "2025-05-10", "horizon_days": 60, "buffer_eur": 3000}
@@ -74,6 +74,18 @@ def test_dashboard_with_closure_goes_red_with_options(client, closure_event):
     assert body["insights"] == []
 
 
+def test_plan_ending_today_no_longer_counts_but_one_ending_tomorrow_does(client, repo):
+    # Today's payments are already in the bank balance, so a plan dated today must not be applied again.
+    repo.add_event(expense(date(2025, 5, 10), "5000"))
+    today = client.get("/dashboard", params=PARAMS).json()
+    assert today["events"] == [] and today["risk"]["min_balance_eur"] == -325.55
+
+    repo.add_event(expense(date(2025, 5, 11), "5000"))
+    tomorrow = client.get("/dashboard", params=PARAMS).json()
+    assert [event["date_to"] for event in tomorrow["events"]] == ["2025-05-11"]
+    assert tomorrow["risk"]["min_balance_eur"] == -5325.55
+
+
 def test_dashboard_surplus_insight_in_december(client):
     body = client.get("/dashboard", params={"as_of_date": "2025-12-31"}).json()
     assert body["risk"]["status"] == "GREEN" and body["risk"]["risk_window"] is None
@@ -131,7 +143,7 @@ def test_approving_option_e_turns_the_light_green(client, repo, closure_event):
     assert decision["llm_explanation"] == "Because it is cheapest."
     assert decision["snapshot"] == {"status_before": "RED", "min_balance_before_eur": -15728.42,
                                     "min_balance_date_before": "2025-07-01", "status_after": "GREEN",
-                                    "min_balance_after_eur": -7061.74}
+                                    "min_balance_after_eur": -7061.74, "credit_limit_after_eur": 15000.0}
     agent_events = [event for event in repo.events if event.source == "agent"]
     assert {event.event_type for event in agent_events} == {"payment_deferral", "credit_line"}
     assert all(event.decision_id == decision["id"] for event in agent_events)
@@ -139,7 +151,7 @@ def test_approving_option_e_turns_the_light_green(client, repo, closure_event):
     after = client.get("/dashboard", params=PARAMS).json()
     assert after["risk"]["status"] == "GREEN" and after["risk"]["credit_limit_eur"] == 15000.0
     assert after["risk"]["min_balance_eur"] == -7061.74 and after["options"] == []
-    assert len(after["events"]) == 3
+    assert len(after["events"]) == 4   # the closure, two postponed payments and the credit line
     assert client.get("/decisions").json()["decisions"][0]["id"] == decision["id"]
 
 

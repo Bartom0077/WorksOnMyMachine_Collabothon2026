@@ -11,6 +11,8 @@ export type ChatEntry =
       text: string;
       pendingEvents: EventDraft[];
       savedEvents: PlannedEvent[];
+      pendingRemovals: PlannedEvent[];
+      removedEvents: PlannedEvent[];
       toolCalls: ToolCall[];
     };
 
@@ -25,10 +27,23 @@ export interface Chat {
   entries: ChatEntry[];
   sending: boolean;
   failed: FailedMessage | null;
-  send: (message: string) => void;
+  /** Returns false when the message was not accepted (blank, or a reply is still pending). */
+  send: (message: string) => boolean;
   retry: () => void;
   /** Forgets the server-side conversation and clears the transcript, leaving a note that explains why. */
   startNewConversation: (note: string) => void;
+}
+
+/**
+ * What the assistant is waiting for, busy with or stuck on, worded for the indicator on its toggle;
+ * null when nothing is.
+ */
+export function chatAttention(chat: Pick<Chat, "entries" | "sending" | "failed">): string | null {
+  if (chat.sending) return "is working on a reply";
+  if (chat.failed !== null) return "could not deliver your message";
+  const last = chat.entries[chat.entries.length - 1];
+  if (last?.role !== "assistant") return null;
+  return last.pendingEvents.length > 0 || last.pendingRemovals.length > 0 ? "needs your confirmation" : null;
 }
 
 /** Chat transcript and POST /chat round-trips with conversation_id continuity. */
@@ -57,13 +72,20 @@ export function useChat(params: ScenarioParams, onEventsChanged: () => void): Ch
           message,
           conversation_id: conversationIdRef.current,
         });
-        if (generation !== generationRef.current) return;
+        // A plan saved or removed by a reply to an abandoned conversation still changed the forecast.
+        if (generation !== generationRef.current) {
+          if (response.events_changed) onEventsChanged();
+          return;
+        }
         conversationIdRef.current = response.conversation_id;
         append({
           role: "assistant",
           text: response.reply,
           pendingEvents: response.pending_events,
           savedEvents: response.saved_events,
+          // A backend from before chat removals does not send these two fields.
+          pendingRemovals: response.pending_removals ?? [],
+          removedEvents: response.removed_events ?? [],
           toolCalls: response.tool_calls,
         });
         if (response.events_changed) {
@@ -82,9 +104,10 @@ export function useChat(params: ScenarioParams, onEventsChanged: () => void): Ch
   const send = useCallback(
     (message: string) => {
       const text = message.trim();
-      if (text === "" || sending) return;
+      if (text === "" || sending) return false;
       append({ role: "user", text });
       void deliver(text);
+      return true;
     },
     [sending, append, deliver],
   );
