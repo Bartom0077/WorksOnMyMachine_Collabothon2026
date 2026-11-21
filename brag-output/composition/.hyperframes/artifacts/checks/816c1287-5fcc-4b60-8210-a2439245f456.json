@@ -1,0 +1,1175 @@
+{
+  "ok": true,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 1,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "composition_file_too_large",
+        "severity": "warning",
+        "message": "This HTML composition file has 360 lines. Smaller sub-compositions are easier to read, iterate on, and diff.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "/home/guardian/Dokumenty/vscode/WorksOnMyMachine_Collabothon2026/brag-output/composition/compositions/app.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Split this sub-composition further into smaller .html files, then mount them from the parent with data-composition-src so each file stays small enough to inspect, revise, and validate independently."
+      }
+    ],
+    "filesScanned": 4
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "duration": 25,
+    "samples": [
+      1.389,
+      4.167,
+      6.944,
+      9.722,
+      12.5,
+      15.278,
+      18.056,
+      20.833,
+      23.611
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 0,
+    "truncated": false,
+    "faceCheck": {
+      "ran": true,
+      "candidates": 0,
+      "faces": 0
+    }
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 10,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.51:1; WCAG AA requires 3:1.",
+        "text": "Vincenzo",
+        "fg": "rgb(255,255,255)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1.51,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(118,118,118)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 530,
+          "y": 372,
+          "width": 350.078125,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.51:1; WCAG AA requires 3:1.",
+        "text": "runs",
+        "fg": "rgb(255,255,255)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1.51,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(118,118,118)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(2)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 880.078125,
+          "y": 372,
+          "width": 186.234375,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.51:1; WCAG AA requires 3:1.",
+        "text": "a",
+        "fg": "rgb(255,255,255)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1.51,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(118,118,118)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(3)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 1066.3125,
+          "y": 372,
+          "width": 63.375,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.51:1; WCAG AA requires 3:1.",
+        "text": "pizzeria",
+        "fg": "rgb(255,255,255)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1.51,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(118,118,118)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(4)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 1129.6875,
+          "y": 372,
+          "width": 303.4375,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.51:1; WCAG AA requires 3:1.",
+        "text": "and",
+        "fg": "rgb(255,255,255)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1.51,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(118,118,118)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(5)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 1433.125,
+          "y": 372,
+          "width": 159.140625,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.51:1; WCAG AA requires 3:1.",
+        "text": "has",
+        "fg": "rgb(255,255,255)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1.51,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(118,118,118)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(6)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 530,
+          "y": 468,
+          "width": 148.828125,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1:1; WCAG AA requires 3:1.",
+        "text": "no",
+        "fg": "rgb(255,204,51)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(143,114,29)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(7)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 678.828125,
+          "y": 468,
+          "width": 113.328125,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1:1; WCAG AA requires 3:1.",
+        "text": "time",
+        "fg": "rgb(255,204,51)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(143,114,29)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(8)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 792.15625,
+          "y": 468,
+          "width": 189.765625,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.51:1; WCAG AA requires 3:1.",
+        "text": "for",
+        "fg": "rgb(255,255,255)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1.51,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(118,118,118)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(9)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 981.921875,
+          "y": 468,
+          "width": 126.1875,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.51:1; WCAG AA requires 3:1.",
+        "text": "finance.",
+        "fg": "rgb(255,255,255)",
+        "bg": "rgb(255,204,51)",
+        "ratio": 1.51,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(118,118,118)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div > div > div:nth-of-type(7) > span:nth-of-type(10)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 1108.109375,
+          "y": 468,
+          "width": 294.96875,
+          "height": 96
+        },
+        "time": 6.944,
+        "times": [
+          6.944
+        ]
+      }
+    ],
+    "enabled": true,
+    "samples": [
+      1.389,
+      6.944,
+      12.5,
+      18.056,
+      23.611
+    ],
+    "checked": 151,
+    "passed": 141
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 4,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "first_frame_empty",
+        "severity": "warning",
+        "message": "Frame 0 shows only the background, and the first frame is the thumbnail on social players: have the title or key image already on screen at 0 s instead of entering from nothing; see references/review.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"Team WorksOnMyMachine · Collabothon 2026\" renders at 26 px for 1.75 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "Team WorksOnMyMachine · Collabothon 2026",
+        "selector": "#op-team",
+        "dataAttributes": {},
+        "sourceFile": "compositions/open.html",
+        "bbox": {
+          "x": 300,
+          "y": 900,
+          "width": 797.28,
+          "height": 36
+        },
+        "time": 1.25,
+        "times": [
+          1.25
+        ],
+        "fontPx": 26,
+        "floorPx": 28,
+        "seconds": 1.75,
+        "elements": [
+          {
+            "selector": "#op-team",
+            "text": "Team WorksOnMyMachine · Collabothon 2026",
+            "fontPx": 26,
+            "time": 1.25,
+            "seconds": 1.75
+          }
+        ]
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 88 text elements stay under it for 0.5 s or more, the smallest \"Commerzbank\" at 15 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "Commerzbank",
+        "selector": "#ap-wordmark",
+        "dataAttributes": {},
+        "sourceFile": "compositions/app.html",
+        "bbox": {
+          "x": 112,
+          "y": 21,
+          "width": 142.47,
+          "height": 20
+        },
+        "time": 7,
+        "times": [
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+          7.75,
+          8.875,
+          8.875,
+          9.375,
+          9.375,
+          9.375,
+          9.375,
+          9.375,
+          11.125,
+          11.25,
+          11.625,
+          15,
+          15,
+          15,
+          15,
+          15,
+          15,
+          15.375,
+          15.375,
+          15.375,
+          15.375,
+          15.375,
+          15.375,
+          15.375,
+          15.375,
+          15.375,
+          15.375,
+          16,
+          16,
+          16,
+          16,
+          16,
+          16,
+          16,
+          16.5,
+          16.5,
+          16.5,
+          16.5,
+          16.5,
+          16.5,
+          16.5,
+          17,
+          17,
+          17,
+          17,
+          17,
+          17,
+          17,
+          17.75,
+          17.875,
+          17.875,
+          17.875,
+          17.875
+        ],
+        "fontPx": 15,
+        "floorPx": 28,
+        "seconds": 13.875,
+        "elements": [
+          {
+            "selector": "#ap-wordmark",
+            "text": "Commerzbank",
+            "fontPx": 15,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-top > div:nth-of-type(5) > div:nth-of-type(1)",
+            "text": "Today",
+            "fontPx": 15,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-top > div:nth-of-type(6) > div:nth-of-type(1)",
+            "text": "Look ahead",
+            "fontPx": 15,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-top > div:nth-of-type(7) > div:nth-of-type(1)",
+            "text": "Safety buffer (€)",
+            "fontPx": 15,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-tabs > span:nth-of-type(1) > span:nth-of-type(1)",
+            "text": "4",
+            "fontPx": 17,
+            "time": 15,
+            "seconds": 5.875
+          },
+          {
+            "selector": "#ap-tabs > span:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "1",
+            "fontPx": 17,
+            "time": 15,
+            "seconds": 5.875
+          },
+          {
+            "selector": "#ap-opt-e > div:nth-of-type(4) > div:nth-of-type(1)",
+            "text": "New lowest balance",
+            "fontPx": 17,
+            "time": 15.375,
+            "seconds": 5.5
+          },
+          {
+            "selector": "#ap-hero > div:nth-of-type(9) > div:nth-of-type(1)",
+            "text": "Balance today",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-hero > div:nth-of-type(9) > div:nth-of-type(3)",
+            "text": "10 May 2025",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-hero > div:nth-of-type(10) > div:nth-of-type(1)",
+            "text": "Lowest projected balance",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-hero > div:nth-of-type(10) > div:nth-of-type(3)",
+            "text": "on 1 Jul 2025",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-hero > div:nth-of-type(11) > div:nth-of-type(1)",
+            "text": "Low point",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-hero > div:nth-of-type(11) > div:nth-of-type(3)",
+            "text": "next 60 days",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-legend > span:nth-of-type(1)",
+            "text": "Past balance",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-legend > span:nth-of-type(2)",
+            "text": "Forecast if you do nothing",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(1)",
+            "text": "−€15K",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(2)",
+            "text": "−€10K",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(3)",
+            "text": "−€5K",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(4)",
+            "text": "€0",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(5)",
+            "text": "€5K",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(6)",
+            "text": "€10K",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(7)",
+            "text": "1 Apr",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(8)",
+            "text": "1 May",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(9)",
+            "text": "1 Jun",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-grid > text:nth-of-type(10)",
+            "text": "1 Jul",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-buffer-label",
+            "text": "Safety buffer",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-today-label",
+            "text": "Today",
+            "fontPx": 18,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-closed-label",
+            "text": "Closed",
+            "fontPx": 18,
+            "time": 11.25,
+            "seconds": 3.75
+          },
+          {
+            "selector": "span.ap-chip.rec",
+            "text": "★ Recommended",
+            "fontPx": 18,
+            "time": 15.375,
+            "seconds": 5.5
+          },
+          {
+            "selector": "#ap-opt-e > div:nth-of-type(4) > div:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "On track",
+            "fontPx": 18,
+            "time": 15.375,
+            "seconds": 5.5
+          },
+          {
+            "selector": "#ap-opt-a > div:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "On track",
+            "fontPx": 18,
+            "time": 16,
+            "seconds": 4.875
+          },
+          {
+            "selector": "#ap-opt-b > div:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "Shortfall ahead",
+            "fontPx": 18,
+            "time": 16.5,
+            "seconds": 4.375
+          },
+          {
+            "selector": "#ap-opt-c > div:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "Shortfall ahead",
+            "fontPx": 18,
+            "time": 17,
+            "seconds": 3.875
+          },
+          {
+            "selector": "#ap-fig-credit > div:nth-of-type(1)",
+            "text": "Credit line",
+            "fontPx": 18,
+            "time": 17.875,
+            "seconds": 3
+          },
+          {
+            "selector": "#ap-fig-credit > div:nth-of-type(3)",
+            "text": "agreed limit",
+            "fontPx": 18,
+            "time": 17.875,
+            "seconds": 3
+          },
+          {
+            "selector": "#ap-done > span:nth-of-type(1)",
+            "text": "✓ Approved",
+            "fontPx": 18,
+            "time": 17.875,
+            "seconds": 3
+          },
+          {
+            "selector": "span.ap-chip.sim",
+            "text": "SIMULATED",
+            "fontPx": 18,
+            "time": 17.875,
+            "seconds": 3
+          },
+          {
+            "selector": "#ap-chat-sub",
+            "text": "I ask before saving anything.",
+            "fontPx": 19,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-typed",
+            "text": "W",
+            "fontPx": 19,
+            "time": 7.75,
+            "seconds": 1.125
+          },
+          {
+            "selector": "#ap-placeholder",
+            "text": "Describe a plan or ask a question…",
+            "fontPx": 19,
+            "time": 8.875,
+            "seconds": 12
+          },
+          {
+            "selector": "#ap-opt-e > div:nth-of-type(4) > div:nth-of-type(2) > span:nth-of-type(2)",
+            "text": "within the €15,000 credit line",
+            "fontPx": 19,
+            "time": 15.375,
+            "seconds": 5.5
+          },
+          {
+            "selector": "#ap-yes",
+            "text": "✓ Yes, include it",
+            "fontPx": 19.58,
+            "time": 9.375,
+            "seconds": 11.5
+          },
+          {
+            "selector": "#ap-approve",
+            "text": "Approve",
+            "fontPx": 19.74,
+            "time": 15.375,
+            "seconds": 2.375
+          },
+          {
+            "selector": "div.when",
+            "text": "1 Jun – 21 Jun 2025",
+            "fontPx": 19.77,
+            "time": 9.375,
+            "seconds": 11.5
+          },
+          {
+            "selector": "div.when > span:nth-of-type(1)",
+            "text": "When",
+            "fontPx": 19.77,
+            "time": 9.375,
+            "seconds": 11.5
+          },
+          {
+            "selector": "#ap-correct",
+            "text": "Correct it",
+            "fontPx": 19.77,
+            "time": 9.375,
+            "seconds": 11.5
+          },
+          {
+            "selector": "#ap-top > div:nth-of-type(5) > div:nth-of-type(2)",
+            "text": "10 May 2025",
+            "fontPx": 20,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "div.ap-seg > span:nth-of-type(1)",
+            "text": "30",
+            "fontPx": 20,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "div.ap-seg > span:nth-of-type(2)",
+            "text": "60 days",
+            "fontPx": 20,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "div.ap-seg > span:nth-of-type(3)",
+            "text": "90",
+            "fontPx": 20,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-top > div:nth-of-type(7) > div:nth-of-type(2)",
+            "text": "3000",
+            "fontPx": 20,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-status-red",
+            "text": "Shortfall ahead",
+            "fontPx": 20,
+            "time": 7,
+            "seconds": 10.625
+          },
+          {
+            "selector": "#ap-saved",
+            "text": "✓ Added to your plans: Holiday closure",
+            "fontPx": 20,
+            "time": 11.625,
+            "seconds": 9.25
+          },
+          {
+            "selector": "#ap-opt-e > div:nth-of-type(8) > div:nth-of-type(1) > span:nth-of-type(1)",
+            "text": "Cost",
+            "fontPx": 20,
+            "time": 15.375,
+            "seconds": 5.5
+          },
+          {
+            "selector": "#ap-opt-a > div:nth-of-type(4)",
+            "text": "Cost",
+            "fontPx": 20,
+            "time": 16,
+            "seconds": 4.875
+          },
+          {
+            "selector": "#ap-opt-a > div:nth-of-type(4) > b:nth-of-type(1)",
+            "text": "€67.60",
+            "fontPx": 20,
+            "time": 16,
+            "seconds": 4.875
+          },
+          {
+            "selector": "#ap-opt-b > div:nth-of-type(4)",
+            "text": "Cost",
+            "fontPx": 20,
+            "time": 16.5,
+            "seconds": 4.375
+          },
+          {
+            "selector": "#ap-opt-b > div:nth-of-type(4) > b:nth-of-type(1)",
+            "text": "€18.28",
+            "fontPx": 20,
+            "time": 16.5,
+            "seconds": 4.375
+          },
+          {
+            "selector": "#ap-opt-c > div:nth-of-type(4)",
+            "text": "Cost",
+            "fontPx": 20,
+            "time": 17,
+            "seconds": 3.875
+          },
+          {
+            "selector": "#ap-opt-c > div:nth-of-type(4) > b:nth-of-type(1)",
+            "text": "€16.48",
+            "fontPx": 20,
+            "time": 17,
+            "seconds": 3.875
+          },
+          {
+            "selector": "#ap-status-green",
+            "text": "On track",
+            "fontPx": 20,
+            "time": 17.75,
+            "seconds": 3.125
+          },
+          {
+            "selector": "#ap-intro",
+            "text": "Tell me a plan and I will show how it changes your forecast.",
+            "fontPx": 21,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-tabs > span:nth-of-type(1)",
+            "text": "Options",
+            "fontPx": 21,
+            "time": 15,
+            "seconds": 5.875
+          },
+          {
+            "selector": "#ap-tabs > span:nth-of-type(2)",
+            "text": "CFO advice",
+            "fontPx": 21,
+            "time": 15,
+            "seconds": 5.875
+          },
+          {
+            "selector": "#ap-tabs > span:nth-of-type(3)",
+            "text": "My plans",
+            "fontPx": 21,
+            "time": 15,
+            "seconds": 5.875
+          },
+          {
+            "selector": "#ap-tabs > span:nth-of-type(4)",
+            "text": "History",
+            "fontPx": 21,
+            "time": 15,
+            "seconds": 5.875
+          },
+          {
+            "selector": "#ap-preview",
+            "text": "Preview on chart",
+            "fontPx": 21,
+            "time": 15.375,
+            "seconds": 2.375
+          },
+          {
+            "selector": "#ap-opt-a > div:nth-of-type(5)",
+            "text": "Approve",
+            "fontPx": 21,
+            "time": 16,
+            "seconds": 4.875
+          },
+          {
+            "selector": "#ap-opt-b > div:nth-of-type(5)",
+            "text": "Approve",
+            "fontPx": 21,
+            "time": 16.5,
+            "seconds": 4.375
+          },
+          {
+            "selector": "#ap-opt-c > div:nth-of-type(5)",
+            "text": "Approve",
+            "fontPx": 21,
+            "time": 17,
+            "seconds": 3.875
+          },
+          {
+            "selector": "#ap-m3",
+            "text": "Yes, please include it in the forecast.",
+            "fontPx": 21.74,
+            "time": 11.125,
+            "seconds": 9.75
+          },
+          {
+            "selector": "div.type",
+            "text": "Closure",
+            "fontPx": 21.75,
+            "time": 9.375,
+            "seconds": 11.5
+          },
+          {
+            "selector": "#ap-m1",
+            "text": "We are closing for holidays from 1 to 21 June",
+            "fontPx": 21.86,
+            "time": 8.875,
+            "seconds": 12
+          },
+          {
+            "selector": "#ap-toggle > span:nth-of-type(1)",
+            "text": "Assistant",
+            "fontPx": 22,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-opt-e > div:nth-of-type(8) > div:nth-of-type(1)",
+            "text": "€12.66",
+            "fontPx": 22,
+            "time": 15.375,
+            "seconds": 5.5
+          },
+          {
+            "selector": "#ap-opt-a > div:nth-of-type(3)",
+            "text": "−€15,728.42",
+            "fontPx": 22,
+            "time": 16,
+            "seconds": 4.875
+          },
+          {
+            "selector": "#ap-opt-b > div:nth-of-type(3)",
+            "text": "−€7,061.74",
+            "fontPx": 22,
+            "time": 16.5,
+            "seconds": 4.375
+          },
+          {
+            "selector": "#ap-opt-c > div:nth-of-type(3)",
+            "text": "−€5,459.84",
+            "fontPx": 22,
+            "time": 17,
+            "seconds": 3.875
+          },
+          {
+            "selector": "#ap-chart-title",
+            "text": "Balance: past 90 days and next 60 days",
+            "fontPx": 24,
+            "time": 7,
+            "seconds": 8
+          },
+          {
+            "selector": "#ap-chat-title",
+            "text": "Assistant",
+            "fontPx": 24,
+            "time": 7,
+            "seconds": 13.875
+          },
+          {
+            "selector": "#ap-opt-e > div:nth-of-type(1)",
+            "text": "E",
+            "fontPx": 24,
+            "time": 15.375,
+            "seconds": 5.5
+          },
+          {
+            "selector": "#ap-opt-a > div:nth-of-type(1)",
+            "text": "A",
+            "fontPx": 24,
+            "time": 16,
+            "seconds": 4.875
+          },
+          {
+            "selector": "#ap-opt-a > div:nth-of-type(2)",
+            "text": "Credit line",
+            "fontPx": 24,
+            "time": 16,
+            "seconds": 4.875
+          },
+          {
+            "selector": "#ap-opt-b > div:nth-of-type(1)",
+            "text": "B",
+            "fontPx": 24,
+            "time": 16.5,
+            "seconds": 4.375
+          },
+          {
+            "selector": "#ap-opt-b > div:nth-of-type(2)",
+            "text": "Postpone the transfer to Zurich",
+            "fontPx": 24,
+            "time": 16.5,
+            "seconds": 4.375
+          },
+          {
+            "selector": "#ap-opt-c > div:nth-of-type(1)",
+            "text": "C",
+            "fontPx": 24,
+            "time": 17,
+            "seconds": 3.875
+          },
+          {
+            "selector": "#ap-opt-c > div:nth-of-type(2)",
+            "text": "Shorter closure",
+            "fontPx": 24,
+            "time": 17,
+            "seconds": 3.875
+          },
+          {
+            "selector": "#ap-opt-e > div:nth-of-type(4) > div:nth-of-type(2)",
+            "text": "−€7,061.74",
+            "fontPx": 26,
+            "time": 15.375,
+            "seconds": 5.5
+          }
+        ]
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and \"Team WorksOnMyMachine · Collabothon 2026\" renders at 26 px for 4.13 s: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "Team WorksOnMyMachine · Collabothon 2026",
+        "selector": "#cl-team",
+        "dataAttributes": {},
+        "sourceFile": "compositions/close.html",
+        "bbox": {
+          "x": 300,
+          "y": 900,
+          "width": 797.28,
+          "height": 36
+        },
+        "time": 20.875,
+        "times": [
+          20.875
+        ],
+        "fontPx": 26,
+        "floorPx": 28,
+        "seconds": 4.125,
+        "elements": [
+          {
+            "selector": "#cl-team",
+            "text": "Team WorksOnMyMachine · Collabothon 2026",
+            "fontPx": 26,
+            "time": 20.875,
+            "seconds": 4.125
+          }
+        ]
+      }
+    ],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 200
+  },
+  "audio": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  }
+}
