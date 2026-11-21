@@ -1,7 +1,8 @@
-# Amalfi data MCP server (mcp_server/): read-only KPI + bank data tools for the CFO agent (OGX).
+# Amalfi data MCP server (mcp_server/): KPI + bank data read tools and the planned-event write tool for the
+# CFO agent (OGX).
 # In-cluster endpoint for OGX:  http://amalfi-mcp.autonomous-cfo.svc.cluster.local:8080/mcp
 # No Route: the server is internal only. Local testing: oc port-forward svc/amalfi-mcp 18080:8080
-# Prereq: secret amalfi-mcp-db (bash db/setup_mcp_readonly_user.sh).
+# Prereq: secret amalfi-mcp-db (bash db/setup_mcp_user.sh).
 apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:

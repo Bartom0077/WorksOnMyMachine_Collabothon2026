@@ -55,7 +55,7 @@ spec:
         - name: backend
           image: image-registry.openshift-image-registry.svc:5000/autonomous-cfo/autonomous-cfo-backend:latest
           imagePullPolicy: Always
-          env:  # KPI engine DB connection (libpq PG* vars; values from the existing amalfi-db secret)
+          env:  # Database connection (libpq PG* vars; values from the existing amalfi-db secret)
             - name: PGHOST
               value: amalfi-db
             - name: PGPORT
@@ -75,6 +75,13 @@ spec:
                 secretKeyRef:
                   name: amalfi-db
                   key: database-password
+            # LLM access: OGX (OpenAI-compatible Responses API) in front of vLLM, and the MCP tool server
+            - name: OGX_URL
+              value: http://cfo-ogx-service.autonomous-cfo.svc.cluster.local:8321
+            - name: OGX_MODEL
+              value: vllm-cfo/cfo-llm
+            - name: MCP_SERVER_URL
+              value: http://amalfi-mcp.autonomous-cfo.svc.cluster.local:8080/mcp
           ports:
             - name: http
               containerPort: 8080
@@ -92,10 +99,10 @@ spec:
             periodSeconds: 20
           resources:
             requests:
-              cpu: 25m
-              memory: 64Mi
+              cpu: 50m
+              memory: 96Mi
             limits:
-              cpu: 200m
+              cpu: 500m
               memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false

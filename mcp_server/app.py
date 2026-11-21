@@ -1,13 +1,16 @@
-"""Amalfi data MCP server — read-only access to KPI snapshots and bank data for the CFO agent.
+"""Amalfi data MCP server — read tools for KPI snapshots and bank data, plus one constrained write
+(a planned event confirmed by the owner in the chat) for the CFO agent.
 
 Run:  python app.py            (streamable HTTP on 0.0.0.0:8080, MCP endpoint /mcp, health /health)
 Env:  DATABASE_URL or PG* vars; AMALFI_AS_OF_DATE (optional server-wide cutoff); MCP_HOST / MCP_PORT.
-Per-request cutoff: HTTP header ``X-As-Of-Date: YYYY-MM-DD`` (set by the agent orchestrator).
+Per-request cutoff: HTTP header ``X-As-Of-Date: YYYY-MM-DD`` (set by the agent orchestrator); it is the
+simulated "today" and is required by the planned-event tools.
 """
 from __future__ import annotations
 
 import logging
 import os
+from datetime import date
 from typing import Annotated, List, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -15,19 +18,23 @@ from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+import planned_events
 import tools
-from db import connect, effective_cutoff
+from db import ToolInputError, connect, connect_write, effective_cutoff, parse_date
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("amalfi-mcp")
 
 INSTRUCTIONS = """\
-Read-only financial data of Pizzeria Amalfi (single EUR business bank account, year 2025).
-All data is limited to the analysis date (no data after it is visible).
+Financial data of Pizzeria Amalfi (single EUR business bank account, year 2025).
+All data is limited to the analysis date (no data after it is visible). Everything is read-only except
+planned events.
 * KPI numbers (cash balance, forecasts, buffer, liquidity gap, surplus, net cash flow, trends, fixed cost
   coverage) are computed by a deterministic engine: read them with get_kpi_snapshot / get_kpi_history and
   quote them as they are. Do not recompute KPIs from transactions.
 * Use get_cashflow_summary, get_transactions and get_fixed_obligations to explain causes and spot risks.
+* Planned events (closure, expense, inflow) the owner mentions: call propose_planned_event first, ask the
+  owner to confirm, and only after an explicit yes call save_planned_event.
 * Dates are YYYY-MM-DD. Amounts are EUR unless a row's currency says otherwise.
 """
 
@@ -41,15 +48,25 @@ mcp = FastMCP(
 )
 
 
-def _cutoff(ctx: Context):
-    header = None
+def _as_of_header(ctx: Context) -> Optional[str]:
     try:
         request = ctx.request_context.request
-        if request is not None:
-            header = request.headers.get("x-as-of-date")
-    except (AttributeError, LookupError, ValueError):
-        pass
-    return effective_cutoff(header, os.environ.get("AMALFI_AS_OF_DATE"))
+    except (LookupError, ValueError):  # no HTTP request in scope (e.g. stdio transport)
+        return None
+    return request.headers.get("x-as-of-date") if request is not None else None
+
+
+def _cutoff(ctx: Context) -> Optional[date]:
+    return effective_cutoff(_as_of_header(ctx), os.environ.get("AMALFI_AS_OF_DATE"))
+
+
+def _today(ctx: Context) -> date:
+    """The simulated "today" for planned events: the X-As-Of-Date header, which is mandatory here."""
+    today = parse_date(_as_of_header(ctx), "X-As-Of-Date header")
+    if today is None:
+        raise ToolInputError("The X-As-Of-Date request header (YYYY-MM-DD) is required for planned events; "
+                             "the orchestrator must set it. This cannot be fixed by changing the arguments.")
+    return today
 
 
 def _run(ctx: Context, fn, **kwargs) -> dict:
@@ -59,8 +76,26 @@ def _run(ctx: Context, fn, **kwargs) -> dict:
         return fn(conn, cutoff, **kwargs)
 
 
+def _rejected(flag: str, tool: str, exc: ToolInputError) -> dict:
+    """A validation failure of a planned-event tool as a normal result.
+
+    OGX reduces MCP tool errors to "Error (code 1): None" in its mcp_call output items, which would hide
+    the reason from the backend; a regular result keeps the message visible to the model and the backend.
+    """
+    log.info("tool=%s rejected: %s", tool, exc)
+    return {flag: False, "error": str(exc)}
+
+
 DateStr = Annotated[str, Field(description="Date in YYYY-MM-DD format.")]
 OptDateStr = Annotated[Optional[str], Field(description="Date in YYYY-MM-DD format.")]
+ChatEventType = Annotated[Literal["closure", "expense", "inflow"], Field(
+    description="closure = restaurant closed (no revenue, no variable costs); expense = one-off payment; "
+                "inflow = one-off money in.")]
+EventStart = Annotated[str, Field(description="YYYY-MM-DD, today or later: first closure day, or the payment day.")]
+EventEnd = Annotated[Optional[str], Field(description="Last closure day (YYYY-MM-DD). Omit for expense/inflow.")]
+EventAmount = Annotated[Optional[float], Field(
+    description="Positive EUR amount; required for expense/inflow, omit for closure.")]
+EventDescription = Annotated[str, Field(description="Short label, e.g. 'Summer holiday closure' or 'New oven'.")]
 
 
 @mcp.tool()
@@ -159,6 +194,56 @@ def get_fixed_obligations(
     withdrawal, silent-partnership investment tranches in CHF): payee, amount,
     currency, frequency, payment day and months. Use it to anticipate upcoming fixed costs."""
     return _run(ctx, tools.get_fixed_obligations, active_on=active_on, category=category)
+
+
+@mcp.tool()
+def list_planned_events(ctx: Context) -> dict:
+    """Planned events already saved for the forecast (closures, one-off expenses and inflows, approved
+    rescue actions) that are ongoing or upcoming on the analysis date."""
+    return _run(ctx, planned_events.list_planned_events)
+
+
+@mcp.tool()
+def propose_planned_event(
+    ctx: Context,
+    event_type: ChatEventType,
+    date_from: EventStart,
+    description: EventDescription,
+    date_to: EventEnd = None,
+    amount_eur: EventAmount = None,
+) -> dict:
+    """Validate a plan the owner mentioned (closure, one-off expense or inflow) WITHOUT saving it. Call it
+    once dates and amount are known, then ask the owner to confirm the returned confirmation_prompt.
+    If it returns valid=false, fix the call or ask the owner; never guess missing dates or amounts."""
+    log.info("tool=propose_planned_event type=%s from=%s to=%s amount=%s", event_type, date_from, date_to, amount_eur)
+    try:
+        return planned_events.propose_planned_event(_today(ctx), event_type=event_type, date_from=date_from,
+                                                    date_to=date_to, amount_eur=amount_eur, description=description)
+    except ToolInputError as exc:
+        return _rejected("valid", "propose_planned_event", exc)
+
+
+@mcp.tool()
+def save_planned_event(
+    ctx: Context,
+    event_type: ChatEventType,
+    date_from: EventStart,
+    description: EventDescription,
+    original_utterance: Annotated[str, Field(description="The owner's own words describing the plan, verbatim.")],
+    date_to: EventEnd = None,
+    amount_eur: EventAmount = None,
+) -> dict:
+    """Save a planned event into the forecast. Call ONLY after the owner explicitly confirmed the proposal
+    from propose_planned_event; use the same values. saved=false with an error means nothing was written."""
+    log.info("tool=save_planned_event type=%s from=%s to=%s amount=%s", event_type, date_from, date_to, amount_eur)
+    try:
+        today = _today(ctx)
+        with connect_write() as conn:
+            return planned_events.save_planned_event(conn, today, event_type=event_type, date_from=date_from,
+                                                     date_to=date_to, amount_eur=amount_eur, description=description,
+                                                     original_utterance=original_utterance)
+    except ToolInputError as exc:
+        return _rejected("saved", "save_planned_event", exc)
 
 
 @mcp.custom_route("/health", methods=["GET"])

@@ -80,3 +80,44 @@ CREATE TABLE IF NOT EXISTS account_balance_anchors (
     source TEXT NOT NULL,
     UNIQUE (account_number, anchor_date)
 );
+
+-- ---------------------------------------------------------------------------
+-- Liquidity agent state (ROZWIAZANIE.md §5): owner decisions and planned events.
+-- Forecasts, averages and transaction categories are never stored; they are recomputed on demand.
+-- ---------------------------------------------------------------------------
+
+-- Audit trail of the owner's decisions on rescue options. Execution is always simulated.
+CREATE TABLE IF NOT EXISTS owner_decisions (
+    id SERIAL PRIMARY KEY,
+    as_of_date DATE NOT NULL,                     -- simulated "today" when the decision was taken
+    horizon_days SMALLINT NOT NULL,
+    buffer_eur NUMERIC(12, 2) NOT NULL,
+    option_id VARCHAR(5) NOT NULL,                -- A..E
+    option_title VARCHAR(255) NOT NULL,
+    option_description TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL CHECK (status IN ('approved', 'rejected')),
+    execution VARCHAR(20) NOT NULL DEFAULT 'SIMULATED' CHECK (execution = 'SIMULATED'),
+    llm_explanation TEXT,
+    execution_messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+    forecast_snapshot JSONB NOT NULL,             -- risk + forecast at the moment of the decision
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Future plans: described by the owner in chat (source 'chat') or created from an approved option ('agent').
+CREATE TABLE IF NOT EXISTS planned_events (
+    id SERIAL PRIMARY KEY,
+    event_type VARCHAR(30) NOT NULL
+        CHECK (event_type IN ('closure', 'expense', 'inflow', 'payment_deferral', 'credit_line')),
+    date_from DATE NOT NULL,
+    date_to DATE NOT NULL CHECK (date_to >= date_from),   -- single-day events: date_to = date_from
+    amount_eur NUMERIC(12, 2) CHECK (amount_eur > 0),      -- NULL for closure and payment_deferral
+    category VARCHAR(50),                                  -- payment_deferral only (e.g. investment_outflow)
+    description TEXT NOT NULL,
+    original_utterance TEXT,                               -- owner's chat message (audit trail)
+    source VARCHAR(10) NOT NULL CHECK (source IN ('chat', 'agent')),
+    as_of_date DATE NOT NULL,                              -- simulated "today" when the event was saved
+    decision_id INTEGER REFERENCES owner_decisions(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_planned_events_dates ON planned_events (date_from, date_to);

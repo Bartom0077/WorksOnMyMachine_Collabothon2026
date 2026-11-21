@@ -1,0 +1,146 @@
+import type { Page, Route } from "@playwright/test";
+import type {
+  ApiErrorBody,
+  ChatRequest,
+  ChatResponse,
+  Dashboard,
+  Decision,
+  DecisionRequest,
+  PlannedEvent,
+  Recommendation,
+} from "../../src/types/api";
+import { greenRecommendation, llmRecommendation, redDashboard } from "./data";
+
+export interface MockError {
+  status: number;
+  body: ApiErrorBody;
+}
+
+/** Mutable backend state; tests change it to script what the next responses look like. */
+export interface MockState {
+  dashboard: Dashboard | MockError;
+  recommendation: Recommendation | MockError;
+  recommendationDelayMs: number;
+  events: PlannedEvent[];
+  decisions: Decision[];
+  /** Responses for successive POST /chat calls; an empty queue answers 503 assistant_unavailable. */
+  chatQueue: (ChatResponse | MockError)[];
+  /** Called for POST /decisions; returns the stored decision or an error and may mutate the state. */
+  onDecision: (request: DecisionRequest, state: MockState) => Decision | MockError;
+  /** Called after a successful chat response is chosen; lets a test change what later requests return. */
+  afterChat: (response: ChatResponse, state: MockState) => void;
+}
+
+export interface MockApi {
+  state: MockState;
+  requests: {
+    dashboard: URLSearchParams[];
+    recommendation: number;
+    chat: ChatRequest[];
+    decisions: DecisionRequest[];
+    deletedEventIds: number[];
+    resets: number;
+  };
+}
+
+export function apiError(status: number, code: string, message: string): MockError {
+  return { status, body: { error: { code, message } } };
+}
+
+function isMockError(value: object): value is MockError {
+  return "status" in value && "body" in value;
+}
+
+function isApiUrl(url: URL): boolean {
+  return url.pathname.startsWith("/api/");
+}
+
+function fulfill(route: Route, value: object, successStatus = 200): Promise<void> {
+  return isMockError(value)
+    ? route.fulfill({ status: value.status, json: value.body })
+    : route.fulfill({ status: successStatus, json: value });
+}
+
+function defaultRecommendation(state: MockState): Recommendation | MockError {
+  if (isMockError(state.recommendation) || isMockError(state.dashboard)) return state.recommendation;
+  return state.dashboard.options.length === 0 ? greenRecommendation : state.recommendation;
+}
+
+/** Installs contract-shaped route mocks for every backend endpoint the UI calls. */
+export async function mockApi(page: Page, overrides: Partial<MockState> = {}): Promise<MockApi> {
+  const state: MockState = {
+    dashboard: redDashboard,
+    recommendation: llmRecommendation,
+    recommendationDelayMs: 0,
+    events: isMockError(overrides.dashboard ?? redDashboard) ? [] : [...redDashboard.events],
+    decisions: [],
+    chatQueue: [],
+    onDecision: () => apiError(409, "option_not_available", "This option is no longer available."),
+    afterChat: () => undefined,
+    ...overrides,
+  };
+  const requests: MockApi["requests"] = {
+    dashboard: [],
+    recommendation: 0,
+    chat: [],
+    decisions: [],
+    deletedEventIds: [],
+    resets: 0,
+  };
+
+  // Match on the path prefix only: a glob like "**/api/**" would also swallow Vite's /src/api/* modules.
+  await page.route(isApiUrl, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const endpoint = `${request.method()} ${url.pathname.replace(/^\/api/, "")}`;
+
+    switch (endpoint) {
+      case "GET /dashboard":
+        requests.dashboard.push(url.searchParams);
+        return fulfill(route, state.dashboard);
+      case "GET /events":
+        return fulfill(route, { events: state.events });
+      case "GET /decisions":
+        return fulfill(route, { decisions: state.decisions });
+      case "POST /recommendation":
+        requests.recommendation += 1;
+        if (state.recommendationDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, state.recommendationDelayMs));
+        }
+        return fulfill(route, defaultRecommendation(state));
+      case "POST /decisions": {
+        const body: DecisionRequest = request.postDataJSON();
+        requests.decisions.push(body);
+        const result = state.onDecision(body, state);
+        if (isMockError(result)) return fulfill(route, result);
+        state.decisions = [result, ...state.decisions];
+        return fulfill(route, { decision: result, execution_messages: result.execution_messages }, 201);
+      }
+      case "POST /chat": {
+        const body: ChatRequest = request.postDataJSON();
+        requests.chat.push(body);
+        const response =
+          state.chatQueue.shift() ?? apiError(503, "assistant_unavailable", "The assistant is not reachable.");
+        if (!isMockError(response)) state.afterChat(response, state);
+        return fulfill(route, response);
+      }
+      case "POST /demo/reset":
+        requests.resets += 1;
+        state.events = [];
+        state.decisions = [];
+        return route.fulfill({ status: 204 });
+      default: {
+        const eventId = /^DELETE \/events\/(\d+)$/.exec(endpoint)?.[1];
+        if (eventId !== undefined) {
+          const id = Number(eventId);
+          requests.deletedEventIds.push(id);
+          state.events = state.events.filter((event) => event.id !== id);
+          return route.fulfill({ status: 204 });
+        }
+        return fulfill(route, apiError(404, "not_found", `No mock for ${endpoint}`));
+      }
+    }
+  });
+
+  return { state, requests };
+}

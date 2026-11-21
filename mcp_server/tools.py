@@ -1,6 +1,6 @@
 """Data tools exposed to the LLM. Pure functions of (connection, cutoff, arguments) -> JSON-able dict.
 
-Rules (SPEC.md §5.1, KPI_SPEC.md):
+Rules (ROZWIAZANIE.md section 11, KPI_SPEC.md):
 * KPIs come only from ``kpi_snapshots`` (deterministic engine); nothing here recomputes them.
 * Every read is capped at the as-of ``cutoff`` so the agent never sees future data.
 * Only whitelisted tables/columns, parameterised SQL, bounded result sizes.

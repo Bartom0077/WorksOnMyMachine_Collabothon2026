@@ -1,13 +1,13 @@
 FROM registry.access.redhat.com/ubi9/nodejs-22:latest AS build
 USER 0
 WORKDIR /opt/app-root/src
-COPY package.json ./
+COPY package.json package-lock.json ./
 RUN chown -R 1001:0 /opt/app-root/src
 USER 1001
-RUN npm install
-COPY --chown=1001:0 index.html vite.config.js ./
+RUN npm ci --no-audit --no-fund
+COPY --chown=1001:0 index.html vite.config.ts tsconfig.json tsconfig.build.json ./
 COPY --chown=1001:0 src ./src
-RUN npm run build
+RUN npm run build:image
 
 FROM registry.access.redhat.com/ubi9/nginx-124:latest
 USER 0

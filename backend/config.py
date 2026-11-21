@@ -1,0 +1,72 @@
+"""Backend configuration: environment-driven settings and the business constants of the liquidity agent.
+
+The database connection is configured with the standard libpq variables (``PGHOST``, ``PGPORT``,
+``PGDATABASE``, ``PGUSER``, ``PGPASSWORD``) or ``DATABASE_URL``; psycopg reads them directly.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from typing import Optional
+
+SERVICE_NAME = "autonomous-cfo-backend"
+
+# Request defaults (ROZWIAZANIE.md §12: top bar).
+DEFAULT_AS_OF_DATE = date(2025, 5, 10)
+DEFAULT_HORIZON_DAYS = 60
+DEFAULT_BUFFER_EUR = Decimal("3000")
+MAX_BUFFER_EUR = Decimal("1000000")
+
+# Forecast (Module 2).
+AVERAGES_LOOKBACK_DAYS = 28
+HISTORY_DAYS = 90
+RECURRING_GRACE_DAYS = 10  # a recurring payment overdue by more than this is treated as discontinued
+
+# Events (Module 3).
+DEFERRAL_MONTHS = 2
+
+# Rescue options (Module 5). The interest rates are illustrative assumptions, not bank quotes.
+CREDIT_LINE_INTEREST_RATE = Decimal("0.09")
+UNARRANGED_OVERDRAFT_RATE = Decimal("0.13")
+CREDIT_LINE_ROUNDING_EUR = Decimal("5000")
+CREDIT_LINE_TERM_DAYS = 365
+SHORT_CLOSURE_DAYS = 7
+DAYS_PER_YEAR = Decimal("365")
+BANK_NAME = "Commerzbank"
+
+# Insights: a surplus above the buffer is worth mentioning from this amount upwards.
+SURPLUS_INSIGHT_MIN_EUR = Decimal("10000")
+SURPLUS_ROUNDING_EUR = Decimal("1000")
+
+# Language model (Module 6). The model's context window is 16,384 tokens shared by input and output, so the
+# output caps below also decide how much room the prompt, the tool schemas and the chat history have.
+LLM_TIMEOUT_SECONDS = 90.0
+LLM_CONNECT_TIMEOUT_SECONDS = 5.0
+LLM_RECOMMENDATION_MAX_OUTPUT_TOKENS = 900
+LLM_CHAT_MAX_OUTPUT_TOKENS = 600
+LLM_COMMENT_MAX_OUTPUT_TOKENS = 250
+RECOMMENDATION_CACHE_SIZE = 128
+CHAT_MESSAGE_MAX_CHARS = 2000
+
+
+@dataclass(frozen=True)
+class Settings:
+    ogx_url: str
+    ogx_model: str
+    mcp_server_url: str
+    account_number: Optional[str]
+    host: str
+    port: int
+
+
+def load_settings() -> Settings:
+    return Settings(
+        ogx_url=os.environ.get("OGX_URL", "http://cfo-ogx-service.autonomous-cfo.svc.cluster.local:8321"),
+        ogx_model=os.environ.get("OGX_MODEL", "vllm-cfo/cfo-llm"),
+        mcp_server_url=os.environ.get("MCP_SERVER_URL", "http://amalfi-mcp.autonomous-cfo.svc.cluster.local:8080/mcp"),
+        account_number=os.environ.get("ACCOUNT_NUMBER") or None,
+        host=os.environ.get("HOST", "0.0.0.0"),
+        port=int(os.environ.get("PORT", "8080")),
+    )
