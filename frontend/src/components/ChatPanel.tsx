@@ -218,7 +218,7 @@ export function ChatPanel({ chat }: Props) {
           <h2 id="chat-title" className="chat__title">
             Assistant
           </h2>
-          <p className="chat__subtitle">Tell me your plans. I ask before saving anything.</p>
+          <p className="chat__subtitle">I ask before saving anything.</p>
         </div>
         <a className="chat__back" href="#main">
           <Icon name="arrowUp" size={14} />
@@ -228,31 +228,28 @@ export function ChatPanel({ chat }: Props) {
 
       <div ref={logRef} className="chat__log" role="log" aria-live="polite" aria-label="Conversation" tabIndex={0}>
         {chat.entries.length === 0 ? (
-          <p className="chat__intro">
-            Tell me what is coming up, such as a holiday closure, a big purchase or money you expect, and I will
-            show how it changes your forecast.
-          </p>
+          <p className="chat__intro">Tell me a plan and I will show how it changes your forecast.</p>
         ) : null}
         <ol className="chat__messages">
-        {chat.entries.map((entry) => (
-          <Entry
-            key={entry.id}
-            entry={entry}
-            actionable={entry.id === lastEntryId && !chat.sending}
-            onSend={sendPreset}
-            onCorrect={startCorrection}
-          />
-        ))}
-        {chat.sending ? (
-          <li className="message message--assistant message--typing">
-            <span className="typing" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </span>
-            <span className="visually-hidden">The assistant is typing…</span>
-          </li>
-        ) : null}
+          {chat.entries.map((entry) => (
+            <Entry
+              key={entry.id}
+              entry={entry}
+              actionable={entry.id === lastEntryId && !chat.sending}
+              onSend={sendPreset}
+              onCorrect={startCorrection}
+            />
+          ))}
+          {chat.sending ? (
+            <li className="message message--assistant message--typing">
+              <span className="typing" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+              <span className="visually-hidden">The assistant is typing…</span>
+            </li>
+          ) : null}
         </ol>
       </div>
 

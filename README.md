@@ -304,32 +304,36 @@ bash deploy/deploy-dev.sh images     # rebuild and roll out the three images onl
 ## Demo script (3 minutes)
 
 All figures below are computed by the code from the 2025 bank statement, with the defaults: horizon
-60 days, safety buffer €3,000. Start with **Reset demo**.
+60 days, safety buffer €3,000. Start with **Reset demo**. The first screen shows the status, the chart and
+the recommended option; "Options", "CFO advice", "My plans" and "History" are tabs of one card below the
+chart.
 
 1. **"Vincenzo runs a pizzeria and has no time for finance."** Today is 10 May 2025 and the balance is
    **€3,205.69**. Even without any plans the agent finds a marginal problem: the lowest projected balance is
    **−€325.55** on 1 July, so the status is "Shortfall ahead". The chart shows why (fixed payments at the
-   start of the month).
+   start of the month); "Why?" in the status card lists those fixed costs.
 2. **The owner tells the assistant a plan.** In the chat: *"We are closing for holidays from 1 to 21 June."*
-   The assistant repeats what it understood and asks for confirmation; after "yes" the plan appears under
-   "My plans" and the forecast is recalculated: the lowest balance drops to **−€15,728.42 on 1 July**. Three
-   weeks without revenue, while salaries, rent and the transfers to Zurich continue. (A plan from the chat
+   The assistant repeats what it understood and asks for confirmation; after "yes" the count on the
+   "My plans" tab goes up (open the tab to see the plan) and the forecast is recalculated: the lowest
+   balance drops to **−€15,728.42 on 1 July**. Three weeks without revenue, while salaries, rent and the
+   transfers to Zurich continue. (A plan from the chat
    can be taken out the same way: *"Remove the oven purchase"* shows a "Remove this plan?" card, and nothing
    is removed before "Yes, remove it".)
 3. **Options computed by code, explained by the model.** The agent shows the options with their new lowest
-   balance and cost: A (credit line), B (postpone the transfer to Zurich), C (shorter closure) and
-   E (postpone payments + a smaller credit line). The explanation card is marked "AI explanation" (or
-   "Standard explanation" when the model is unavailable). Ask in the chat: *"Why E?"*
+   balance and cost, the recommended one first: A (credit line), B (postpone the transfer to Zurich),
+   C (shorter closure) and E (postpone payments + a smaller credit line). "Details" on an option holds its
+   description, cost notes and the "Reject" button. The explanation in the status card is marked
+   "AI explanation" (or "Standard explanation" when the model is unavailable). Ask in the chat: *"Why E?"*
 4. **The owner approves.** Approve option E in the dialog ("Approve (simulated)"). The transfers are
    postponed and a **€15,000 credit line** is recorded; the lowest balance becomes −€7,061.74, which the
    credit line covers, so the status turns to **"On track"**. The decision, with the status before and
-   after, is in the decision history. No money was moved.
+   after, is in the "History" tab. No money was moved.
 5. **Bonus: the opposite situation.** Move "Today" to 31 December 2025: the balance is **€33,266.35**, the
    status is "On track", and the agent points out about **€27,000** that is not needed for payments or the
-   buffer and could go to a short-term deposit. "CFO recommendations" offers three steps that can be ticked
+   buffer and could go to a short-term deposit. The "CFO advice" tab offers three steps that can be ticked
    and approved together: a **tax reserve deposit of €14,849.65** (1 month), the advice to ask for higher
    income tax prepayments, and an **investment deposit of €12,000** for 6 months. With all three approved
-   the status stays "On track" (lowest balance €3,581.16) and both deposits appear under "My plans".
+   the status stays "On track" (lowest balance €3,581.16) and both deposits appear in the "My plans" tab.
 
 ## Known limits
 

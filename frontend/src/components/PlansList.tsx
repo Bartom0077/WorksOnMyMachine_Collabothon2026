@@ -1,6 +1,5 @@
-import { useState } from "react";
-import { type ApiError, api, toApiError } from "../api/client";
 import type { AsyncResource } from "../hooks/useAsyncResource";
+import type { PlanRemoval } from "../hooks/usePlanRemoval";
 import { EVENT_TYPE_LABELS, formatDateRange, formatEur } from "../lib/format";
 import type { EventType, EventsResponse, PlannedEvent } from "../types/api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -27,13 +26,13 @@ function approvedKind(event: PlannedEvent): "option" | "recommendation" {
 
 interface Props {
   events: AsyncResource<EventsResponse>;
-  onRemoved: () => void;
+  removal: PlanRemoval;
 }
 
 interface PlanRowProps {
   event: PlannedEvent;
   removing: boolean;
-  /** True while any removal is in flight: one at a time, so their state cannot clobber each other. */
+  /** True while any removal is in flight. */
   disabled: boolean;
   onRemove: () => void;
 }
@@ -44,7 +43,7 @@ function PlanRow({ event, removing, disabled, onRemove }: PlanRowProps) {
   return (
     <li className="plan">
       <span className={`plan__icon plan__icon--${event.event_type}`} aria-hidden="true">
-        <Icon name={EVENT_ICONS[event.event_type]} size={18} />
+        <Icon name={EVENT_ICONS[event.event_type]} size={16} />
       </span>
       <div className="plan__body">
         <p className="plan__title">
@@ -53,16 +52,18 @@ function PlanRow({ event, removing, disabled, onRemove }: PlanRowProps) {
             {event.source === "chat" ? "From chat" : `From an approved ${approvedKind(event)}`}
           </span>
         </p>
-        <p className="muted">
-          {EVENT_TYPE_LABELS[event.event_type]} · {formatDateRange(event.date_from, event.date_to)}
-          {event.amount_eur !== null ? ` · ${formatEur(event.amount_eur)}` : ""}
-        </p>
-        {event.original_utterance !== null ? (
-          <details className="disclosure disclosure--inline">
-            <summary>What you said</summary>
-            <blockquote>{event.original_utterance}</blockquote>
-          </details>
-        ) : null}
+        <div className="plan__meta">
+          <p className="muted">
+            {EVENT_TYPE_LABELS[event.event_type]} · {formatDateRange(event.date_from, event.date_to)}
+            {event.amount_eur !== null ? ` · ${formatEur(event.amount_eur)}` : ""}
+          </p>
+          {event.original_utterance !== null ? (
+            <details className="disclosure disclosure--inline">
+              <summary>What you said</summary>
+              <blockquote>{event.original_utterance}</blockquote>
+            </details>
+          ) : null}
+        </div>
       </div>
       <button
         type="button"
@@ -78,36 +79,9 @@ function PlanRow({ event, removing, disabled, onRemove }: PlanRowProps) {
   );
 }
 
-/** "My plans": every planned event, removable. */
-export function PlansList({ events, onRemoved }: Props) {
-  const [removingId, setRemovingId] = useState<number | null>(null);
-  const [removeError, setRemoveError] = useState<ApiError | null>(null);
-  // Measures created by an approved option or recommendation are removed only after an explicit confirmation.
-  const [awaitingConfirmationId, setAwaitingConfirmationId] = useState<number | null>(null);
-
-  async function remove(id: number) {
-    if (removingId !== null) return;
-    setRemovingId(id);
-    setRemoveError(null);
-    try {
-      await api.deleteEvent(id);
-      setAwaitingConfirmationId(null);
-      onRemoved();
-    } catch (error) {
-      setRemoveError(toApiError(error));
-    } finally {
-      setRemovingId(null);
-    }
-  }
-
-  function requestRemoval(event: PlannedEvent) {
-    if (event.source === "agent") {
-      setRemoveError(null);
-      setAwaitingConfirmationId(event.id);
-    } else {
-      void remove(event.id);
-    }
-  }
+/** "My plans" panel: every planned event, removable. */
+export function PlansList({ events, removal }: Props) {
+  const { removingId, awaitingConfirmationId, error: removeError } = removal;
 
   const list = events.data?.events ?? null;
   const awaitingConfirmation = list?.find((event) => event.id === awaitingConfirmationId) ?? null;
@@ -121,21 +95,19 @@ export function PlansList({ events, onRemoved }: Props) {
         );
 
   return (
-    <section className="card" aria-labelledby="plans-title">
-      <div className="card__head">
-        <h2 id="plans-title" className="card__title">
-          My plans
-        </h2>
-      </div>
+    <section aria-labelledby="plans-title">
+      <h2 id="plans-title" className="visually-hidden">
+        My plans
+      </h2>
       {removeError !== null && awaitingConfirmation === null ? (
-        <ErrorNotice title="The plan was not removed" error={removeError} onDismiss={() => setRemoveError(null)} />
+        <ErrorNotice title="The plan was not removed" error={removeError} onDismiss={removal.dismissError} />
       ) : null}
       {events.error ? (
         <ErrorNotice title="Your plans could not be loaded" error={events.error} onRetry={events.reload} />
       ) : null}
       {list === null && events.loading ? <Skeleton label="Loading your plans" lines={2} /> : null}
       {list !== null && list.length === 0 ? (
-        <EmptyState>No plans yet. Tell the assistant about a closure, a purchase or an expected payment.</EmptyState>
+        <EmptyState>No plans yet. Tell the assistant what is coming up.</EmptyState>
       ) : null}
       {list !== null && list.length > 0 ? (
         <ul className="plans">
@@ -145,7 +117,7 @@ export function PlansList({ events, onRemoved }: Props) {
               event={event}
               removing={removingId === event.id}
               disabled={removingId !== null}
-              onRemove={() => requestRemoval(event)}
+              onRemove={() => removal.request(event)}
             />
           ))}
         </ul>
@@ -158,13 +130,8 @@ export function PlansList({ events, onRemoved }: Props) {
         busy={removingId !== null}
         error={removeError}
         danger
-        onConfirm={() => {
-          if (awaitingConfirmation !== null) void remove(awaitingConfirmation.id);
-        }}
-        onCancel={() => {
-          setAwaitingConfirmationId(null);
-          setRemoveError(null);
-        }}
+        onConfirm={removal.confirm}
+        onCancel={removal.cancel}
       >
         {awaitingConfirmation !== null ? (
           <>

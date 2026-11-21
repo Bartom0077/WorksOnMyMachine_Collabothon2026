@@ -37,17 +37,37 @@ function ProvenanceBadge({ summary }: { summary: AdviceRecommendation["summary"]
   );
 }
 
-/** The coordinator's "what and why now"; the cards below stay usable while it loads or when it fails. */
+/** The opening sentence of a text; a full stop inside an abbreviation ("p.a. on") does not end it. */
+function firstSentence(text: string): string {
+  return /^[\s\S]*?[.!?](?=\s+\p{Lu}|\s*$)/u.exec(text)?.[0] ?? text;
+}
+
+/**
+ * The coordinator's "what and why now": its headline and opening sentence, the rest under "Read more".
+ * The cards below stay usable while it loads or when it fails.
+ */
 function Summary({ recommendation }: Pick<Props, "recommendation">) {
   const { data, error, loading, reload } = recommendation;
+  const lead = data !== null ? firstSentence(data.summary.text) : "";
+  const rest = data !== null ? data.summary.text.slice(lead.length).trim() : "";
   return (
     <div className="advice__summary" aria-live="polite">
       {loading ? <Skeleton label="Loading the summary of the recommendations" lines={2} /> : null}
       {error ? <ErrorNotice title="The summary could not be loaded" error={error} onRetry={reload} /> : null}
       {data ? (
         <>
-          <p className="advice__headline">{data.summary.headline}</p>
-          <p className="advice-summary__text">{data.summary.text}</p>
+          <p className="advice__headline">
+            {data.summary.headline} <ProvenanceBadge summary={data.summary} />
+          </p>
+          <p>{lead}</p>
+          {rest !== "" ? (
+            <details className="disclosure">
+              <summary>
+                Read more<span className="visually-hidden"> of the summary</span>
+              </summary>
+              <p className="muted">{rest}</p>
+            </details>
+          ) : null}
         </>
       ) : null}
     </div>
@@ -75,7 +95,7 @@ function tipsOf(recommendation: AdviceRecommendation | null, agent: AdviceAgent)
 
 /** CFO recommendations of the tax, currency and investment advisors: select any of them, then decide together. */
 export function AdviceSection({ advice, recommendation, cards, flow, chart, baseline }: Props) {
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
   const { settledSelections } = flow;
   const loaded = advice.data !== null;
   const hasProposals = cards.length > 0;
@@ -83,20 +103,22 @@ export function AdviceSection({ advice, recommendation, cards, flow, chart, base
   const nothingToDecide = selectedIds.length === 0 || !flow.canDecide;
 
   // A settled selection disables the button that held the focus, which would drop the keyboard position to
-  // the top of the page: keep it in this section. The confirmation is a child of this section, so React has
-  // already closed it (and lifted its modal focus trap) when this effect runs.
+  // the top of the page: move it to this section, whose focus outline is visible (its heading is not). The
+  // confirmation is a child of this section, so React has already closed it (and lifted its modal focus
+  // trap) when this effect runs.
+  // The panel is mounted anew each time its tab is opened: only a selection settled since then moves the focus.
+  const focusedForSettled = useRef(settledSelections);
   useEffect(() => {
-    if (settledSelections > 0) headingRef.current?.focus();
+    if (settledSelections === focusedForSettled.current) return;
+    focusedForSettled.current = settledSelections;
+    sectionRef.current?.focus();
   }, [settledSelections]);
 
   return (
-    <section className="card" aria-labelledby="advice-title">
-      <div className="card__head">
-        <h2 id="advice-title" className="card__title" ref={headingRef} tabIndex={-1}>
-          CFO recommendations
-        </h2>
-        {hasProposals && recommendation.data ? <ProvenanceBadge summary={recommendation.data.summary} /> : null}
-      </div>
+    <section className="advice" aria-labelledby="advice-title" ref={sectionRef} tabIndex={-1}>
+      <h2 id="advice-title" className="visually-hidden">
+        CFO recommendations
+      </h2>
 
       {flow.error !== null && !flow.awaitingApproval ? (
         <ErrorNotice title="Your decision was not saved" error={flow.error} onDismiss={flow.dismissError} />
@@ -146,10 +168,10 @@ export function AdviceSection({ advice, recommendation, cards, flow, chart, base
         <div className="advice__actions">
           <p className="muted" role="status">
             {selectedIds.length === 0
-              ? "Tick the recommendations you want to decide on. Any combination works together."
+              ? "Tick what you want to decide on."
               : `${selectedIds.length} of ${cards.length} selected.`}
           </p>
-          <span className="option__decide">
+          <span className="advice__buttons">
             <button type="button" className="btn" onClick={flow.rejectSelected} disabled={nothingToDecide}>
               {flow.busyStatus === "rejected" ? "Saving…" : "Reject selected"}
             </button>

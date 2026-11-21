@@ -10,6 +10,22 @@ async function expectNoAxeViolations(page: Page) {
   expect(results.violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([]);
 }
 
+function workspaceTab(page: Page, name: RegExp) {
+  return page.getByRole("tablist", { name: "Decisions and plans" }).getByRole("tab", { name });
+}
+
+/** Selects each workspace tab in turn and checks the page with that panel on screen. */
+async function expectNoAxeViolationsInEachTab(page: Page, names: RegExp[]) {
+  for (const name of names) {
+    const tab = workspaceTab(page, name);
+    await tab.click();
+    await expect(page.getByRole("tabpanel")).toHaveAccessibleName(name);
+    await expectNoAxeViolations(page);
+  }
+}
+
+const ALL_TABS = [/Options/, /CFO advice/, /My plans/, /History/];
+
 async function loadRedState(page: Page) {
   await mockApi(page, { decisions: [approvedDecision], chatQueue: [chatProposal] });
   await page.goto("/");
@@ -21,7 +37,23 @@ test.describe("accessibility", () => {
     await loadRedState(page);
     await page.getByRole("button", { name: "We are closing for holidays from 1 to 21 June" }).click();
     await expect(page.getByRole("group", { name: "Plan awaiting your confirmation" })).toBeVisible();
-    await page.getByRole("button", { name: "Why?" }).click();
+    await page.getByText("Why?", { exact: true }).click();
+    await expect(page.getByRole("row", { name: /Salaries/ })).toBeVisible();
+    await expectNoAxeViolations(page);
+  });
+
+  test("every workspace tab has no WCAG A/AA violations", async ({ page }) => {
+    await loadRedState(page);
+    await expectNoAxeViolationsInEachTab(page, ALL_TABS);
+  });
+
+  test("opened disclosures have no WCAG A/AA violations", async ({ page }) => {
+    await loadRedState(page);
+    await page.getByText("Why?", { exact: true }).click();
+    await page.getByText("Details and table", { exact: true }).click();
+    await page.getByText("Details of option E").click();
+    await expect(page.getByRole("region", { name: "Forecast table" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reject option E" })).toBeVisible();
     await expectNoAxeViolations(page);
   });
 
@@ -54,6 +86,7 @@ test.describe("accessibility", () => {
     await page.goto("/");
     await expect(page.getByText("No action needed")).toBeVisible();
     await expectNoAxeViolations(page);
+    await expectNoAxeViolationsInEachTab(page, [/CFO advice/, /My plans/, /History/]);
   });
 
   test("page structure exposes landmarks and a keyboard path to an option", async ({ page }) => {
@@ -71,6 +104,38 @@ test.describe("accessibility", () => {
     await expect(legend).toContainText("Forecast with option E");
     await page.keyboard.press("Enter");
     await expect(legend).toContainText("Forecast with option A");
+  });
+
+  test("the tab list is a single Tab stop that leads into its panel", async ({ page }) => {
+    await loadRedState(page);
+
+    await workspaceTab(page, /Options/).focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect(workspaceTab(page, /My plans/)).toBeFocused();
+
+    // Tab leaves the tab list for the panel instead of walking through the remaining tabs.
+    await page.keyboard.press("Tab");
+    await expect(workspaceTab(page, /History/)).not.toBeFocused();
+    const focusInPanel = await page
+      .getByRole("tabpanel")
+      .evaluate((panel) => panel.contains(document.activeElement));
+    expect(focusInPanel).toBe(true);
+
+    // Shift+Tab returns to the selected tab, not to the first one.
+    await page.keyboard.press("Shift+Tab");
+    await expect(workspaceTab(page, /My plans/)).toBeFocused();
+  });
+
+  test("a panel without controls is still a Tab stop", async ({ page }) => {
+    await mockApi(page, { events: [], decisions: [] });
+    await page.goto("/");
+
+    for (const name of [/My plans/, /History/]) {
+      await workspaceTab(page, name).click();
+      await page.keyboard.press("Tab");
+      await expect(page.getByRole("tabpanel", { name })).toBeFocused();
+    }
   });
 });
 
@@ -90,5 +155,23 @@ test.describe("mobile (375 px)", () => {
     );
     expect(overflow).toBeLessThanOrEqual(0);
     await expectNoAxeViolations(page);
+  });
+
+  test("every workspace tab is reachable and fits the phone width", async ({ page }) => {
+    await loadRedState(page);
+
+    for (const name of ALL_TABS) {
+      const tab = workspaceTab(page, name);
+      // The tab list wraps instead of scrolling sideways: once scrolled to, each tab is entirely on screen.
+      await tab.scrollIntoViewIfNeeded();
+      await expect(tab).toBeInViewport({ ratio: 1 });
+      await tab.click();
+      await expect(page.getByRole("tabpanel")).toHaveAccessibleName(name);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, `horizontal page scroll in tab ${name}`).toBeLessThanOrEqual(0);
+      await expectNoAxeViolations(page);
+    }
   });
 });

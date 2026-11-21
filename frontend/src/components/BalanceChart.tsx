@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import {
   CartesianGrid,
   Line,
@@ -32,6 +32,8 @@ const COLORS = {
 };
 const BASELINE_DASH = "7 5";
 const PREVIEW_DASH = "2 4";
+/** A surface-coloured outline that keeps a point label readable where a line runs through it. */
+const LABEL_HALO = { stroke: COLORS.surface, strokeWidth: 3, paintOrder: "stroke" };
 const MAX_TOOLTIP_ITEMS = 4;
 
 interface Props {
@@ -127,7 +129,7 @@ function describeChart(dashboard: Dashboard, preview: ChartPreview | null): stri
   return parts.join(" ");
 }
 
-/** Balance history and forecast lines with event overlays, plus a table alternative. */
+/** Balance history and forecast lines with event overlays; the prose summary and a table sit behind a disclosure. */
 export default function BalanceChart({ dashboard, preview }: Props) {
   const model = useMemo(() => buildChartModel(dashboard, preview), [dashboard, preview]);
   const rowsByTime = useMemo(() => new Map(model.rows.map((row) => [row.time, row])), [model.rows]);
@@ -149,6 +151,7 @@ export default function BalanceChart({ dashboard, preview }: Props) {
   const minLabelSide = minTime > firstTime + (lastTime - firstTime) * 0.8 ? "left" : "right";
   const previewCreditLimit = preview?.creditLimitEur ?? null;
   const summary = describeChart(dashboard, preview);
+  const summaryId = useId();
   // A healthy forecast simply continues the history colour; red is reserved for a forecast that needs attention.
   const baselineColor = risk.status === "GREEN" ? COLORS.history : COLORS.baseline;
   const baselineLabel = needsAction(dashboard) ? "If you do nothing" : "Forecast";
@@ -158,8 +161,9 @@ export default function BalanceChart({ dashboard, preview }: Props) {
   const bufferLabel = hasCreditLine
     ? `Safety buffer (${formatEurWhole(dashboard.buffer_eur)} above the credit limit)`
     : "Safety buffer";
-  // Labels sit above their line, away from the busiest part of the plot: without a credit line the buffer is
-  // near the history line (left), with one it is near the forecast's low point (right).
+  // The buffer label sits above its line, away from the busiest part of the plot: without a credit line the
+  // buffer is near the history line (left), with one it is near the forecast's low point (right). A credit
+  // limit is labelled below its line, so the two cannot collide when the buffer sits just above the limit.
   const bufferLabelPosition = hasCreditLine ? "insideBottomLeft" : "insideBottomRight";
 
   return (
@@ -168,30 +172,26 @@ export default function BalanceChart({ dashboard, preview }: Props) {
         <h2 id="chart-title" className="card__title">
           Balance: past {dashboard.history.length} days and next {dashboard.horizon_days} days
         </h2>
+        <ul className="legend" aria-label="Chart legend">
+          <LegendItem color={COLORS.history} label="Past balance" />
+          <LegendItem color={baselineColor} dash={BASELINE_DASH} label={baselineLegend} />
+          {preview !== null ? (
+            <LegendItem color={COLORS.preview} dash={PREVIEW_DASH} label={`Forecast with ${preview.name}`} />
+          ) : null}
+          {model.closures.length > 0 ? (
+            <li>
+              <span className="legend__band" aria-hidden="true" />
+              Closed
+            </li>
+          ) : null}
+        </ul>
       </div>
 
-      <ul className="legend" aria-label="Chart legend">
-        <LegendItem color={COLORS.history} label="Past balance" />
-        <LegendItem color={baselineColor} dash={BASELINE_DASH} label={baselineLegend} />
-        {preview !== null ? (
-          <LegendItem
-            color={COLORS.preview}
-            dash={PREVIEW_DASH}
-            label={`Forecast with ${preview.name}: ${preview.title}`}
-          />
-        ) : null}
-        {model.closures.length > 0 ? (
-          <li>
-            <span className="legend__band" aria-hidden="true" />
-            Closed
-          </li>
-        ) : null}
-      </ul>
-
-      <figure className="chart">
+      {/* The description lives in the collapsed disclosure below; referencing it keeps it announced with the chart. */}
+      <figure className="chart" aria-describedby={summaryId}>
         <div className="chart__plot">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={model.rows} margin={{ top: 24, right: 16, bottom: 4, left: 0 }} accessibilityLayer>
+            <LineChart data={model.rows} margin={{ top: 20, right: 16, bottom: 0, left: 0 }} accessibilityLayer>
               <CartesianGrid vertical={false} stroke={COLORS.grid} />
               <XAxis
                 dataKey="time"
@@ -242,7 +242,7 @@ export default function BalanceChart({ dashboard, preview }: Props) {
                   stroke={COLORS.credit}
                   strokeDasharray="8 3 2 3"
                  
-                  label={{ value: "Credit limit", position: "insideBottomLeft", fill: COLORS.credit, fontSize: 12 }}
+                  label={{ value: "Credit limit", position: "insideTopLeft", fill: COLORS.credit, fontSize: 12 }}
                 />
               ) : null}
               {previewCreditLimit !== null ? (
@@ -253,7 +253,7 @@ export default function BalanceChart({ dashboard, preview }: Props) {
                  
                   label={{
                     value: `Credit limit with ${preview?.name ?? ""}`,
-                    position: "insideBottomLeft",
+                    position: "insideTopLeft",
                     fill: COLORS.credit,
                     fontSize: 12,
                   }}
@@ -330,6 +330,7 @@ export default function BalanceChart({ dashboard, preview }: Props) {
                     position: "top",
                     fill: COLORS.zero,
                     fontSize: 12,
+                    ...LABEL_HALO,
                   }}
                 />
               ))}
@@ -346,21 +347,24 @@ export default function BalanceChart({ dashboard, preview }: Props) {
                   fill: COLORS.zero,
                   fontSize: 12,
                   fontWeight: 600,
+                  ...LABEL_HALO,
                 }}
               />
             </LineChart>
           </ResponsiveContainer>
         </div>
-        <figcaption className="chart__caption">{summary}</figcaption>
       </figure>
-      <p className="muted">
-        Day-to-day revenue and running costs are estimated from your average over the last{" "}
-        {dashboard.forecast.daily_averages.lookback_days} days ({dashboard.forecast.daily_averages.open_days} of them
-        open); fixed payments and your plans are added on their due dates.
-      </p>
 
       <details className="disclosure">
-        <summary>Show the forecast as a table</summary>
+        <summary>Details and table</summary>
+        <p id={summaryId} className="muted">
+          {summary}
+        </p>
+        <p className="muted">
+          Day-to-day revenue and running costs are estimated from your average over the last{" "}
+          {dashboard.forecast.daily_averages.lookback_days} days ({dashboard.forecast.daily_averages.open_days} of
+          them open); fixed payments and your plans are added on their due dates.
+        </p>
         <div className="table-scroll" tabIndex={0} role="region" aria-label="Forecast table">
           <table className="table">
             <caption className="visually-hidden">Projected end-of-day balance per day</caption>

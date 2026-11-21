@@ -51,7 +51,7 @@ export function AdviceApprovalDialog({ flow, baseline }: Props) {
                 {title}{" "}
                 {proposal.amount_eur !== null ? (
                   <span className="dialog__amount">
-                    Amount: <strong>{formatEur(proposal.amount_eur)}</strong>
+                    Amount: <strong className="dialog__figure">{formatEur(proposal.amount_eur)}</strong>
                   </span>
                 ) : null}
               </li>
@@ -60,7 +60,7 @@ export function AdviceApprovalDialog({ flow, baseline }: Props) {
           {combined !== null ? (
             <p>
               {selected.length > 1 ? "Together, your" : "Your"} lowest projected balance becomes{" "}
-              <strong>{formatEur(combined.minBalanceEur)}</strong> on {formatDate(combined.minBalanceDate)}.
+              <strong className="dialog__figure">{formatEur(combined.minBalanceEur)}</strong> on {formatDate(combined.minBalanceDate)}.
             </p>
           ) : null}
           {simulatedActions.length > 0 ? (

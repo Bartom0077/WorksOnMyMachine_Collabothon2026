@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# Deploys the working tree (not `main`) to the development namespace "autonomous-cfo-dev".
+# Deploys the working tree (not `main`) to a development namespace ("autonomous-cfo-dev" unless NS is set).
 #
 # The manifests in deploy/ are written for the namespace "autonomous-cfo". This script re-targets them on the
 # fly (namespace, image paths, in-cluster service host names) and builds the three images from the local
 # directories with binary builds, so nothing has to be pushed first. It only ever talks to
-# "autonomous-cfo-dev": every `oc` call names that namespace explicitly.
+# that one namespace: every `oc` call names it explicitly.
 #
 # The development stack is complete and separate: its own PostgreSQL, MCP server, OGX server, backend and
 # frontend. Only the model itself (vLLM "cfo-llm" in the namespace "cfo-models") is shared, read-only.
 #
 # Prereq: `oc login ...`. Run from the repository root:
 #   bash deploy/deploy-dev.sh            # everything
+#   NS=autonomous-cfo-dev02 bash deploy/deploy-dev.sh   # the same, into another development namespace
 #   bash deploy/deploy-dev.sh infra      # database, OGX server and manifests only (no image builds)
 #   bash deploy/deploy-dev.sh images     # rebuild and roll out the three images only
 set -euo pipefail
 
-NS="autonomous-cfo-dev"
+NS="${NS:-autonomous-cfo-dev}"
 PROD_NS="autonomous-cfo"
 STEP="${1:-all}"
 

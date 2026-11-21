@@ -38,6 +38,23 @@ function proposal(id: string): AdviceProposal {
   return found;
 }
 
+type TabName = "Options" | "CFO advice" | "My plans" | "History";
+
+function tabList(page: Page): Locator {
+  return page.getByRole("tablist", { name: "Decisions and plans" });
+}
+
+/** A workspace tab by its label; its accessible name also carries the count ("CFO advice 4"). */
+function tab(page: Page, name: TabName): Locator {
+  return tabList(page).getByRole("tab", { name: new RegExp(`^${name}`) });
+}
+
+/** Selects a workspace tab; only the panel of the selected tab is rendered. */
+async function openTab(page: Page, name: TabName): Promise<void> {
+  await tab(page, name).click();
+  await expect(tab(page, name)).toHaveAttribute("aria-selected", "true");
+}
+
 function section(page: Page): Locator {
   return page.getByRole("region", { name: "CFO recommendations" });
 }
@@ -49,6 +66,15 @@ function group(page: Page, heading: string): Locator {
 
 function card(page: Page, title: string): Locator {
   return section(page).getByRole("group", { name: title, exact: true });
+}
+
+/** The "Details" disclosure of a proposal card. */
+function details(page: Page, title: string): Locator {
+  return card(page, title).locator("details");
+}
+
+function detailsSummary(page: Page, title: string): Locator {
+  return details(page, title).locator("summary");
 }
 
 /** GREEN with a surplus and four proposals (T1, T2, F2, I1) worded by the language model. */
@@ -71,17 +97,20 @@ async function expectNoAxeViolations(page: Page): Promise<void> {
 }
 
 test.describe("CFO recommendations", () => {
-  test("sits below the options and groups the proposals by advisor", async ({ page }) => {
+  test("is the first tab when there is nothing to rescue and groups the proposals by advisor", async ({ page }) => {
     await loadSurplus(page);
     await expect(section(page).getByText("AI summary")).toBeVisible();
 
-    const cardTitles = await page.getByRole("main").getByRole("heading", { level: 2 }).allInnerTexts();
-    expect(cardTitles.slice(cardTitles.indexOf("Next steps"))).toEqual([
+    // No rescue options: the "all clear" note sits above the tabs and the recommendations are the default tab.
+    await expect(tabList(page).getByRole("tab")).toHaveText(["CFO advice 4", "My plans 0", "History 0"]);
+    await expect(tab(page, "CFO advice")).toHaveAttribute("aria-selected", "true");
+    const cardTitles = await page.getByRole("main").getByRole("heading", { level: 2 }).allTextContents();
+    expect(cardTitles.slice(cardTitles.indexOf("Next steps")).map((title) => title.trim())).toEqual([
       "Next steps",
       "CFO recommendations",
-      "My plans",
-      "Decision history",
     ]);
+    await expect(page.getByRole("tabpanel")).toHaveCount(1);
+    await expect(page.getByRole("tabpanel", { name: /^CFO advice/ })).toContainText("Cover the tax bill and put the rest to work");
     await expect(section(page).getByRole("heading", { level: 3 })).toHaveText([
       "Tax",
       "Currency (CHF transfers)",
@@ -92,29 +121,146 @@ test.describe("CFO recommendations", () => {
     await expect(group(page, "Investments").getByRole("checkbox")).toHaveCount(1);
 
     await expect(section(page).getByText("Cover the tax bill and put the rest to work")).toBeVisible();
-    await expect(section(page).getByText(/You have €27,000 more than you need/)).toBeVisible();
+    // Only the opening sentence of the summary is shown; the rest is one click away.
+    await expect(section(page).getByText("You have €27,000 more than you need.", { exact: true })).toBeVisible();
+    const rest = section(page).getByText("Reserve the income tax first, then let the remaining cash earn interest.");
+    await expect(rest).toBeHidden();
+    await section(page).getByText("Read more").click();
+    await expect(rest).toBeVisible();
   });
 
-  test("a card shows the figures, dates, effect and assumptions of its proposal", async ({ page }) => {
+  test("the tabs show counts and work from the keyboard", async ({ page }) => {
+    await loadSurplus(page, { events: [depositEvent(7, proposal("I1"))] });
+    const advice = tab(page, "CFO advice");
+    const plans = tab(page, "My plans");
+    const history = tab(page, "History");
+    await expect(tabList(page).getByRole("tab")).toHaveText(["CFO advice 4", "My plans 1", "History 0"]);
+
+    // Roving tabindex: only the selected tab is in the tab order, and it names the panel it controls.
+    await expect(advice).toHaveAttribute("tabindex", "0");
+    await expect(plans).toHaveAttribute("tabindex", "-1");
+    await expect(history).toHaveAttribute("tabindex", "-1");
+    const advicePanelId = await advice.getAttribute("aria-controls");
+    expect(advicePanelId).not.toBeNull();
+    await expect(page.getByRole("tabpanel")).toHaveAttribute("id", advicePanelId ?? "");
+
+    await advice.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(plans).toBeFocused();
+    await expect(plans).toHaveAttribute("aria-selected", "true");
+    await expect(plans).toHaveAttribute("tabindex", "0");
+    await expect(advice).toHaveAttribute("aria-selected", "false");
+    await expect(advice).toHaveAttribute("tabindex", "-1");
+    await expect(page.getByRole("tabpanel")).toHaveCount(1);
+    await expect(page.getByRole("tabpanel")).toHaveAttribute("id", (await plans.getAttribute("aria-controls")) ?? "");
+    await expect(page.getByRole("region", { name: "My plans" }).getByRole("listitem")).toHaveCount(1);
+    await expect(section(page)).toHaveCount(0);
+
+    await page.keyboard.press("End");
+    await expect(history).toBeFocused();
+    await expect(history).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText("No decisions yet. Approvals and rejections are recorded here.")).toBeVisible();
+
+    // The arrows wrap around at both ends.
+    await page.keyboard.press("ArrowRight");
+    await expect(advice).toBeFocused();
+    await expect(advice).toHaveAttribute("aria-selected", "true");
+    await expect(section(page).getByRole("checkbox")).toHaveCount(4);
+    await page.keyboard.press("ArrowLeft");
+    await expect(history).toBeFocused();
+    await expect(history).toHaveAttribute("aria-selected", "true");
+
+    await page.keyboard.press("Home");
+    await expect(advice).toBeFocused();
+    await expect(advice).toHaveAttribute("aria-selected", "true");
+
+    // Tab leaves the tab list for the panel, then its first control, instead of walking through the other tabs.
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("tabpanel")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(section(page).getByText("Read more")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(section(page).getByRole("checkbox").first()).toBeFocused();
+  });
+
+  test("a selection survives a visit to another tab", async ({ page }) => {
+    await loadSurplus(page);
+    await expect(section(page).getByText("AI summary")).toBeVisible();
+    await section(page).getByRole("checkbox", { name: TITLES.T1 }).check();
+    await detailsSummary(page, TITLES.T1).click();
+
+    await openTab(page, "History");
+    await expect(section(page)).toHaveCount(0);
+    await openTab(page, "CFO advice");
+
+    await expect(section(page).getByRole("checkbox", { name: TITLES.T1 })).toBeChecked();
+    await expect(section(page).getByText("1 of 4 selected.")).toBeVisible();
+    await expect(section(page).getByRole("button", { name: "Approve selected" })).toBeEnabled();
+    // The panel is rendered anew, so its disclosures are collapsed again.
+    await expect(details(page, TITLES.T1)).not.toHaveAttribute("open");
+  });
+
+  test("coming back to the tab after a decision does not move the focus into the panel", async ({ page }) => {
+    await loadSurplus(page, {
+      onAdviceDecision: (request) => request.proposal_ids.map((id, index) => adviceDecision(index + 1, proposal(id), "rejected")),
+    });
+    await expect(section(page).getByText("AI summary")).toBeVisible();
+    await section(page).getByRole("checkbox", { name: TITLES.F2 }).check();
+    await section(page).getByRole("button", { name: "Reject selected" }).click();
+    await expect(section(page)).toBeFocused();
+    await expect(tab(page, "History")).toHaveText("History 1");
+
+    await tab(page, "CFO advice").focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(tab(page, "My plans")).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(tab(page, "CFO advice")).toHaveAttribute("aria-selected", "true");
+    await expect(section(page).getByRole("heading", { level: 2 })).toBeAttached();
+    await expect(tab(page, "CFO advice")).toBeFocused();
+  });
+
+  test("a card shows the figures and effect of its proposal; dates and assumptions are under Details", async ({ page }) => {
     await loadSurplus(page);
 
     const reserve = card(page, TITLES.T1);
     await expect(reserve.getByText("Recommended")).toBeVisible();
+    await expect(reserve.getByRole("term")).toHaveText(["Effect", "Amount", "Interest earned", "New lowest balance"]);
     await expect(reserve).toContainText("Amount€5,214.37");
-    await expect(reserve).toContainText("Dates11 May – 11 Jun 2025");
     await expect(reserve).toContainText("Interest earned€8.86");
-    await expect(reserve).toContainText("New lowest balance€25,025.93 on 15 May 2025");
+    await expect(reserve).toContainText("New lowest balance€25,025.93");
     await expect(reserve.getByText("On track")).toBeVisible();
     await expect(reserve).toContainText(proposal("T1").effect);
+
+    // The rest is one click away: collapsed by default, opened by its summary.
+    const reserveDetails = details(page, TITLES.T1);
+    await expect(reserveDetails).not.toHaveAttribute("open");
+    await expect(reserveDetails.getByText("Dates: 11 May – 11 Jun 2025")).toBeHidden();
+    await expect(reserve.getByRole("list", { name: "Assumptions" })).toHaveCount(0);
+    await expect(detailsSummary(page, TITLES.T1)).toHaveText(`Details: ${TITLES.T1}`);
+    await detailsSummary(page, TITLES.T1).click();
+    await expect(reserveDetails).toHaveAttribute("open");
+    await expect(reserveDetails.getByText("Dates: 11 May – 11 Jun 2025")).toBeVisible();
+    await expect(reserveDetails.getByText("Lowest balance on 15 May 2025.")).toBeVisible();
     await expect(reserve.getByRole("list", { name: "Assumptions" }).getByRole("listitem")).toHaveText([
       "Deposit rate of 2% a year (illustrative, not a bank quote).",
       "Deposit term of one month.",
     ]);
+    // Opening one card leaves the others collapsed.
+    await expect(details(page, TITLES.I1)).not.toHaveAttribute("open");
+
+    // The disclosure works from the keyboard too.
+    await detailsSummary(page, TITLES.T1).focus();
+    await page.keyboard.press("Enter");
+    await expect(reserveDetails).not.toHaveAttribute("open");
+    await page.keyboard.press("Space");
+    await expect(reserveDetails).toHaveAttribute("open");
 
     // A proposal that moves no money has no amount, no new balance and nothing to preview.
     const forward = card(page, TITLES.F2);
     await expect(forward).toContainText("Risk removed€400.00");
-    await expect(forward).toContainText("DatesUntil 15 Dec 2025");
+    await detailsSummary(page, TITLES.F2).click();
+    await expect(details(page, TITLES.F2).getByText("Dates: Until 15 Dec 2025")).toBeVisible();
+    await expect(details(page, TITLES.F2)).not.toContainText("Lowest balance on");
     await expect(forward).not.toContainText("Amount");
     await expect(forward).not.toContainText("New lowest balance");
     await expect(forward.getByText("Recommended")).toHaveCount(0);
@@ -203,6 +349,13 @@ test.describe("CFO recommendations", () => {
     const api = await mockApi(page);
     await page.goto("/");
 
+    // With rescue options on offer the recommendations wait behind the "Options" tab.
+    await expect(tabList(page).getByRole("tab")).toHaveText(["Options 4", "CFO advice 1", "My plans 2", "History 0"]);
+    await expect(tab(page, "Options")).toHaveAttribute("aria-selected", "true");
+    await expect(section(page)).toHaveCount(0);
+    await openTab(page, "CFO advice");
+    await expect(page.getByRole("region", { name: "Your options" })).toHaveCount(0);
+
     await expect(section(page).getByRole("heading", { level: 3 })).toHaveText(["Tax"]);
     await expect(section(page).getByRole("checkbox")).toHaveCount(1);
     await expect(card(page, "Start a tax reserve once the cash gap is closed")).toContainText("About €2,340");
@@ -222,6 +375,8 @@ test.describe("CFO recommendations", () => {
     await page.goto("/");
 
     await expect(section(page).getByRole("status", { name: "Loading the CFO recommendations" })).toBeVisible();
+    // No count badge while the number of recommendations is unknown.
+    await expect(tab(page, "CFO advice")).toHaveText("CFO advice");
     const alert = section(page).getByRole("alert").filter({ hasText: "The recommendations could not be loaded" });
     await expect(alert).toContainText("The database is not reachable.");
     await expect(alert).toContainText("database_unavailable");
@@ -233,6 +388,7 @@ test.describe("CFO recommendations", () => {
     await alert.getByRole("button", { name: "Try again" }).click();
     await expect(alert).toHaveCount(0);
     await expect(section(page).getByRole("checkbox")).toHaveCount(4);
+    await expect(tab(page, "CFO advice")).toHaveText("CFO advice 4");
   });
 
   test("several proposals can be selected; the actions need a selection", async ({ page }) => {
@@ -243,6 +399,7 @@ test.describe("CFO recommendations", () => {
     const reject = section(page).getByRole("button", { name: "Reject selected" });
     await expect(approve).toBeDisabled();
     await expect(reject).toBeDisabled();
+    await expect(section(page).getByText("Tick what you want to decide on.")).toBeVisible();
 
     await section(page).getByRole("checkbox", { name: TITLES.T1 }).check();
     // The title is the checkbox's label: clicking it selects too.
@@ -263,13 +420,15 @@ test.describe("CFO recommendations", () => {
     await expect(section(page).getByText("AI summary")).toBeVisible();
     const legend = page.getByRole("list", { name: "Chart legend" });
     await expect(legend).not.toContainText("Forecast with");
+    // The chart's text summary and table sit in its disclosure.
+    await page.getByText("Details and table", { exact: true }).click();
 
     const preview = card(page, TITLES.T1).getByRole("button", { name: /Preview on chart/ });
     await expect(preview).toHaveAttribute("aria-pressed", "false");
     await preview.click();
     const shown = card(page, TITLES.T1).getByRole("button", { name: /Shown on chart/ });
     await expect(shown).toHaveAttribute("aria-pressed", "true");
-    await expect(legend).toContainText(`Forecast with recommendation T1: ${TITLES.T1}`);
+    await expect(legend.getByRole("listitem").filter({ hasText: "Forecast with" })).toHaveText("Forecast with recommendation T1");
     await expect(page.getByText(/With recommendation T1 \(.+\) the lowest point is €25,025.93 on 15 May 2025/)).toBeVisible();
     await expect(page.locator(".recharts-line")).toHaveCount(3);
 
@@ -281,12 +440,11 @@ test.describe("CFO recommendations", () => {
     await section(page).getByRole("checkbox", { name: TITLES.T1 }).check();
     await expect(legend).toContainText("Forecast with recommendation T1");
     await section(page).getByRole("checkbox", { name: TITLES.I1 }).check();
-    await expect(legend).toContainText(`Forecast with recommendations T1 + I1: ${TITLES.T1} + ${TITLES.I1}`);
+    await expect(legend.getByRole("listitem").filter({ hasText: "Forecast with" })).toHaveText("Forecast with recommendations T1 + I1");
     await expect(page.getByText(/With recommendations T1 \+ I1 \(.+\) the lowest point is €4,025.93 on 15 May 2025/)).toBeVisible();
     expect(SURPLUS_COMBINED_MIN_BALANCE).toBe(4025.93);
 
     // Each day of the combined line is the baseline plus the effect of both deposits.
-    await page.getByText("Show the forecast as a table").click();
     await expect(page.getByRole("columnheader", { name: "With recommendations T1 + I1" })).toBeVisible();
     const lowestDay = page.getByRole("row", { name: /^15 May 2025/ });
     await expect(lowestDay).toContainText("€30,240.30");
@@ -298,11 +456,11 @@ test.describe("CFO recommendations", () => {
 
     // A proposal that moves no money leaves the combined line alone.
     await section(page).getByRole("checkbox", { name: TITLES.F2 }).check();
-    await expect(legend).toContainText("Forecast with recommendations T1 + I1:");
+    await expect(legend).toContainText("Forecast with recommendations T1 + I1");
 
     // A single preview takes over from the selection until the selection changes again.
     await card(page, TITLES.I1).getByRole("button", { name: /Preview on chart/ }).click();
-    await expect(legend).toContainText(`Forecast with recommendation I1: ${TITLES.I1}`);
+    await expect(legend.getByRole("listitem").filter({ hasText: "Forecast with" })).toHaveText("Forecast with recommendation I1");
     await section(page).getByRole("checkbox", { name: TITLES.T1 }).uncheck();
     await section(page).getByRole("checkbox", { name: TITLES.I1 }).uncheck();
     await expect(legend).not.toContainText("Forecast with");
@@ -315,28 +473,36 @@ test.describe("CFO recommendations", () => {
       adviceRecommendation: surplusAdviceRecommendation,
     });
     await page.goto("/");
-    await expect(section(page).getByText("AI summary")).toBeVisible();
     const legend = page.getByRole("list", { name: "Chart legend" });
     const optionC = page.getByRole("article", { name: /Option C/ });
     const optionE = page.getByRole("article", { name: /Option E/ });
     await expect(legend).toContainText("Forecast with option E");
-    await expect(optionE.getByRole("button", { name: "Shown on chart" })).toBeVisible();
+    await expect(optionE.getByRole("button", { name: /Shown on chart/ })).toBeVisible();
 
+    // The options and the recommendations live in different tabs; the chart above them is shared.
+    await openTab(page, "CFO advice");
+    await expect(section(page).getByText("AI summary")).toBeVisible();
+    await expect(legend).toContainText("Forecast with option E");
     await section(page).getByRole("checkbox", { name: TITLES.I1 }).check();
     await expect(legend).toContainText("Forecast with recommendation I1");
     await expect(legend).not.toContainText("Forecast with option");
-    await expect(optionE.getByRole("button", { name: "Preview on chart" })).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator(".recharts-line")).toHaveCount(3);
+    await openTab(page, "Options");
+    await expect(optionE.getByRole("button", { name: /Preview on chart/ })).toHaveAttribute("aria-pressed", "false");
+    await expect(legend).toContainText("Forecast with recommendation I1");
 
-    await optionC.getByRole("button", { name: "Preview on chart" }).click();
+    await optionC.getByRole("button", { name: /Preview on chart/ }).click();
     await expect(legend).toContainText("Forecast with option C");
     await expect(legend).not.toContainText("Forecast with recommendation");
     // The selection itself is kept; only the chart moved on.
+    await openTab(page, "CFO advice");
     await expect(section(page).getByRole("checkbox", { name: TITLES.I1 })).toBeChecked();
+    await expect(legend).toContainText("Forecast with option C");
 
     await card(page, TITLES.T1).getByRole("button", { name: /Preview on chart/ }).click();
     await expect(legend).toContainText("Forecast with recommendation T1");
-    await expect(optionC.getByRole("button", { name: "Preview on chart" })).toHaveAttribute("aria-pressed", "false");
+    await openTab(page, "Options");
+    await expect(optionC.getByRole("button", { name: /Preview on chart/ })).toHaveAttribute("aria-pressed", "false");
   });
 
   test("approving the selection asks for confirmation, posts it once and refreshes everything", async ({ page }) => {
@@ -403,16 +569,22 @@ test.describe("CFO recommendations", () => {
     expect(api.requests.advice.length).toBe(requestsBefore.advice + 1);
     await expect.poll(() => api.requests.adviceRecommendation.length).toBe(requestsBefore.recommendation + 1);
 
+    // The counts on the tabs follow: two recommendations left, two plans and two decisions more.
+    await expect(tabList(page).getByRole("tab")).toHaveText(["CFO advice 2", "My plans 2", "History 2"]);
+
+    await openTab(page, "My plans");
     const plans = page.getByRole("region", { name: "My plans" }).getByRole("listitem");
     await expect(plans).toHaveCount(2);
     await expect(plans.first()).toContainText("Term deposit · 11 May – 11 Jun 2025 · €5,214.37");
     await expect(plans.first()).toContainText("From an approved recommendation");
+
+    await openTab(page, "History");
     const reserveRow = page.getByRole("row", { name: /Recommendation T1: Tax reserve deposit/ });
     await expect(reserveRow).toContainText("Approved");
     await expect(reserveRow).toContainText("SIMULATED");
     await expect(page.getByRole("row", { name: /Recommendation I1: Investment deposit/ })).toBeVisible();
     // The column is named for both kinds of decision it lists.
-    await expect(page.getByRole("region", { name: "Decision history" }).getByRole("columnheader")).toContainText([
+    await expect(page.getByRole("region", { name: "Decision history" }).first().getByRole("columnheader")).toContainText([
       "Option or recommendation",
     ]);
 
@@ -438,7 +610,9 @@ test.describe("CFO recommendations", () => {
     await expect(section(page).getByRole("checkbox", { name: TITLES.T2 })).toBeChecked();
     // Nothing was settled: the focus goes back to the button that opened the confirmation.
     await expect(section(page).getByRole("button", { name: "Approve selected" })).toBeFocused();
-    await expect(page.getByText("No decisions yet. Options and recommendations you approve or reject are recorded here.")).toBeVisible();
+    await expect(tab(page, "History")).toHaveText("History 0");
+    await openTab(page, "History");
+    await expect(page.getByText("No decisions yet. Approvals and rejections are recorded here.")).toBeVisible();
   });
 
   test("the confirmation states the exact amount apart from a code title that already names it", async ({ page }) => {
@@ -478,7 +652,7 @@ test.describe("CFO recommendations", () => {
     await expect(section(page).getByRole("checkbox")).toHaveCount(3);
     await expect(page.getByRole("dialog")).toHaveCount(0);
     // The button that was used is disabled again; the focus stays in the section.
-    await expect(section(page).getByRole("heading", { level: 2 })).toBeFocused();
+    await expect(section(page)).toBeFocused();
     expect(api.requests.adviceDecisions).toEqual([
       {
         as_of_date: "2025-05-10",
@@ -490,11 +664,13 @@ test.describe("CFO recommendations", () => {
         fingerprints: { F2: "fp-f2-4" },
       },
     ]);
+    // Nothing was executed, so nothing is announced as simulated.
+    await expect(page.getByRole("status").filter({ hasText: "approved" })).toHaveCount(0);
+    await expect(tabList(page).getByRole("tab")).toHaveText(["CFO advice 3", "My plans 0", "History 1"]);
+    await openTab(page, "History");
     const row = page.getByRole("row", { name: /Recommendation F2: Fix the exchange rate/ });
     await expect(row).toContainText("Rejected");
     await expect(row).toContainText("Not executed");
-    // Nothing was executed, so nothing is announced as simulated.
-    await expect(page.getByRole("status").filter({ hasText: "approved" })).toHaveCount(0);
   });
 
   test("a proposal that is no longer available is reported and the recommendations are refreshed", async ({ page }) => {
@@ -516,7 +692,7 @@ test.describe("CFO recommendations", () => {
     const alert = section(page).getByRole("alert").filter({ hasText: "Your decision was not saved" });
     await expect(alert).toContainText("Recommendation I1 is not currently offered.");
     await expect(alert).toContainText("proposal_not_available");
-    await expect(section(page).getByRole("heading", { level: 2 })).toBeFocused();
+    await expect(section(page)).toBeFocused();
     await expect(section(page).getByRole("checkbox")).toHaveCount(1);
     await expect(section(page).getByRole("checkbox")).not.toBeChecked();
     expect(api.requests.advice.length).toBe(adviceRequestsBefore + 1);
@@ -569,14 +745,19 @@ test.describe("CFO recommendations", () => {
 
     // Removing a plan recalculates everything; the investment deposit is then no longer on offer.
     api.state.advice = { ...surplusAdvice, proposals: redAdvice.proposals.concat(proposal("T1")) };
+    await openTab(page, "My plans");
     await page.getByRole("button", { name: `Withdraw recommendation: ${CODE_TITLES.I1}` }).click();
     await page.getByRole("dialog", { name: "Withdraw this approved recommendation?" }).getByRole("button", { name: "Withdraw recommendation" }).click();
+    await expect(tabList(page).getByRole("tab")).toHaveText(["CFO advice 2", "My plans 0", "History 0"]);
+    // The owner was working in the plans: the tab stays where it is.
+    await expect(tab(page, "My plans")).toHaveAttribute("aria-selected", "true");
 
+    await openTab(page, "CFO advice");
     await expect(section(page).getByRole("checkbox")).toHaveCount(2);
     await expect(section(page).getByRole("checkbox", { checked: true })).toHaveCount(0);
     await expect(section(page).getByRole("button", { name: "Approve selected" })).toBeDisabled();
-    // The owner was working in the plans, not in the confirmation: the focus is not pulled into this section.
-    await expect(section(page).getByRole("heading", { level: 2 })).not.toBeFocused();
+    // Nothing was settled in the confirmation: the focus is not pulled into this section.
+    await expect(section(page)).not.toBeFocused();
   });
 
   test("everything works from the keyboard", async ({ page }) => {
@@ -616,7 +797,7 @@ test.describe("CFO recommendations", () => {
 
     // "Approve selected" is disabled again, so the focus moves to the section heading instead of the page top.
     await expect(section(page).getByRole("button", { name: "Approve selected" })).toBeDisabled();
-    await expect(section(page).getByRole("heading", { level: 2 })).toBeFocused();
+    await expect(section(page)).toBeFocused();
   });
 
   test("has no WCAG A/AA violations with a selection, in the confirmation and after the approval", async ({ page }) => {
@@ -630,6 +811,10 @@ test.describe("CFO recommendations", () => {
     await section(page).getByRole("checkbox", { name: TITLES.I1 }).check();
     await expectNoAxeViolations(page);
 
+    await detailsSummary(page, TITLES.T1).click();
+    await expect(details(page, TITLES.T1).getByText("Assumptions")).toBeVisible();
+    await expectNoAxeViolations(page);
+
     await section(page).getByRole("button", { name: "Approve selected" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -637,6 +822,11 @@ test.describe("CFO recommendations", () => {
 
     await dialog.getByRole("button", { name: "Approve (simulated)" }).click();
     await expect(page.getByRole("status").filter({ hasText: "2 recommendations approved" })).toBeVisible();
+    await expectNoAxeViolations(page);
+
+    // The decisions just recorded, in the tab they land in.
+    await openTab(page, "History");
+    await expect(page.getByRole("row", { name: /Recommendation T1/ })).toBeVisible();
     await expectNoAxeViolations(page);
   });
 
@@ -647,12 +837,24 @@ test.describe("CFO recommendations", () => {
       await loadSurplus(page);
       await expect(section(page).getByText("AI summary")).toBeVisible();
       await section(page).getByRole("checkbox", { name: TITLES.T1 }).check();
+      await detailsSummary(page, TITLES.T1).click();
+      await expect(details(page, TITLES.T1).getByText("Assumptions")).toBeVisible();
+      // All tabs stay in view on the phone.
+      for (const name of ["CFO advice", "My plans", "History"] as const) {
+        await expect(tab(page, name)).toBeInViewport();
+      }
 
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );
       expect(overflow).toBeLessThanOrEqual(0);
-      for (const target of [section(page).getByRole("checkbox").first(), card(page, TITLES.T1).getByText(TITLES.T1, { exact: true })]) {
+      const targets = [
+        section(page).getByRole("checkbox").first(),
+        card(page, TITLES.T1).getByText(TITLES.T1, { exact: true }),
+        tab(page, "CFO advice"),
+        tab(page, "History"),
+      ];
+      for (const target of targets) {
         const box = await target.boundingBox();
         expect(box?.width).toBeGreaterThanOrEqual(24);
         expect(box?.height).toBeGreaterThanOrEqual(24);

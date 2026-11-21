@@ -5,7 +5,6 @@ import { ApprovalDialog } from "./components/ApprovalDialog";
 import { ChatPanel } from "./components/ChatPanel";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DecisionHistory } from "./components/DecisionHistory";
-import { ExplanationCard } from "./components/ExplanationCard";
 import { ErrorNotice, Skeleton } from "./components/Feedback";
 import { Icon } from "./components/Icon";
 import { OptionsSection } from "./components/OptionsSection";
@@ -13,11 +12,13 @@ import { OutcomeBanner } from "./components/OutcomeBanner";
 import { PlansList } from "./components/PlansList";
 import { StatusHero } from "./components/StatusHero";
 import { TopBar } from "./components/TopBar";
+import { type WorkspaceTab, WorkspaceTabs } from "./components/WorkspaceTabs";
 import { useAdviceFlow } from "./hooks/useAdviceFlow";
 import { useAsyncResource } from "./hooks/useAsyncResource";
 import { useChartPreview } from "./hooks/useChartPreview";
 import { useChat } from "./hooks/useChat";
 import { type DecisionOutcome, useDecisionFlow } from "./hooks/useDecisionFlow";
+import { usePlanRemoval } from "./hooks/usePlanRemoval";
 import { buildAdviceCards } from "./lib/advice";
 import { formatDate } from "./lib/format";
 import type { Dashboard, Recommendation, ScenarioParams } from "./types/api";
@@ -37,6 +38,14 @@ function pickRecommendedOptionId(dashboard: Dashboard, recommendation: Recommend
   const llmChoice = recommendation?.recommended_option_id ?? null;
   if (llmChoice !== null && dashboard.options.some((option) => option.id === llmChoice)) return llmChoice;
   return dashboard.code_recommended_option_id;
+}
+
+type WorkspaceTabId = "options" | "advice" | "plans" | "history";
+
+/** The tab on screen: the owner's choice while that tab exists, otherwise the first one (the most urgent). */
+function pickActiveTab(tabs: WorkspaceTab<WorkspaceTabId>[], chosen: WorkspaceTabId | null): WorkspaceTabId {
+  if (chosen !== null && tabs.some((tab) => tab.id === chosen)) return chosen;
+  return tabs[0]?.id ?? "plans";
 }
 
 function optionOutcome(outcome: DecisionOutcome | null) {
@@ -68,6 +77,7 @@ export default function App() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetError, setResetError] = useState<ApiError | null>(null);
+  const [chosenTab, setChosenTab] = useState<WorkspaceTabId | null>(null);
 
   const loadDashboard = useCallback((signal: AbortSignal) => api.getDashboard(params, signal), [params]);
   const dashboard = useAsyncResource(loadDashboard, { keepPreviousData: true });
@@ -129,6 +139,7 @@ export default function App() {
   const decisions = useDecisionFlow(board, boardIsCurrent, recommendation.data?.explanation ?? null, refreshAll);
   const adviceIsCurrent = boardIsCurrent && !advice.loading && advice.error === null;
   const adviceFlow = useAdviceFlow(offer, adviceCards, adviceIsCurrent, refreshAll);
+  const planRemoval = usePlanRemoval(refreshAll);
   const recommendedOptionId = board ? pickRecommendedOptionId(board, recommendation.data) : null;
   const chart = useChartPreview(board, recommendedOptionId, adviceCards, adviceFlow.selected);
   const { startNewConversation } = chat;
@@ -171,6 +182,56 @@ export default function App() {
     }
   }
 
+  const optionsSection =
+    board !== null ? (
+      <OptionsSection
+        dashboard={board}
+        recommendation={recommendation.data}
+        recommendedOptionId={recommendedOptionId}
+        previewOptionId={chart.optionId}
+        decisions={decisions}
+        onPreview={chart.previewOption}
+      />
+    ) : null;
+  const hasOptions = board !== null && board.options.length > 0;
+
+  // Rescue options come first while there are any; the scenario-bound tabs need a dashboard on screen.
+  const tabs: WorkspaceTab<WorkspaceTabId>[] = [];
+  if (hasOptions) {
+    tabs.push({ id: "options", label: "Options", count: board.options.length, content: optionsSection });
+  }
+  if (board !== null) {
+    tabs.push({
+      id: "advice",
+      label: "CFO advice",
+      count: offer !== null ? adviceCards.length : null,
+      content: (
+        <AdviceSection
+          advice={advice}
+          recommendation={adviceRecommendation}
+          cards={adviceCards}
+          flow={adviceFlow}
+          chart={chart}
+          baseline={board.forecast.days}
+        />
+      ),
+    });
+  }
+  tabs.push(
+    {
+      id: "plans",
+      label: "My plans",
+      count: events.data?.events.length ?? null,
+      content: <PlansList events={events} removal={planRemoval} />,
+    },
+    {
+      id: "history",
+      label: "History",
+      count: decisionLog.data?.decisions.length ?? null,
+      content: <DecisionHistory decisions={decisionLog} />,
+    },
+  );
+
   return (
     <div className="app">
       <a className="skip-link" href="#main">
@@ -206,36 +267,32 @@ export default function App() {
           {board === null && dashboard.loading ? <DashboardSkeleton /> : null}
           {board !== null ? (
             <>
-              <StatusHero dashboard={board} />
+              <StatusHero dashboard={board} recommendation={recommendation} />
               <Suspense fallback={<ChartSkeleton />}>
                 <BalanceChart dashboard={board} preview={chart.preview} />
               </Suspense>
-              <ExplanationCard
-                recommendation={recommendation}
-                riskDrivers={board.risk_drivers}
-                riskWindow={board.risk.risk_window}
-              />
-              <OptionsSection
-                dashboard={board}
-                recommendation={recommendation.data}
-                recommendedOptionId={recommendedOptionId}
-                previewOptionId={chart.optionId}
-                decisions={decisions}
-                onPreview={chart.previewOption}
-              />
-              <AdviceSection
-                advice={advice}
-                recommendation={adviceRecommendation}
-                cards={adviceCards}
-                flow={adviceFlow}
-                chart={chart}
-                baseline={board.forecast.days}
-              />
+              {/* With nothing to decide the section is a one-line "all clear" strip, shown without a tab of its own. */}
+              {hasOptions ? null : optionsSection}
             </>
           ) : null}
 
-          <PlansList events={events} onRemoved={refreshAll} />
-          <DecisionHistory decisions={decisionLog} />
+          {/* Not before the first dashboard answer: the tabs would open on "My plans" and then jump to "Options". */}
+          {board === null && dashboard.loading ? null : (
+            <WorkspaceTabs
+              label="Decisions and plans"
+              tabs={tabs}
+              selectedId={pickActiveTab(tabs, chosenTab)}
+              onSelect={setChosenTab}
+            />
+          )}
+
+          <footer className="trust-line">
+            <Icon name="database" size={14} />
+            <p>
+              Figures: deterministic code on your bank transactions. AI explains and suggests. Nothing happens
+              without your approval.
+            </p>
+          </footer>
         </main>
 
         <ChatPanel chat={chat} />

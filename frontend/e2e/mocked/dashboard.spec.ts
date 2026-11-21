@@ -1,12 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { type Page, expect, test } from "@playwright/test";
 import {
   approvedDashboard,
+  approvedDecision,
   closureEvent,
   fallbackRecommendation,
   greenDashboard,
   redDashboard,
 } from "../fixtures/data";
 import { apiError, mockApi } from "../fixtures/mockApi";
+
+function workspaceTab(page: Page, name: RegExp) {
+  return page.getByRole("tablist", { name: "Decisions and plans" }).getByRole("tab", { name });
+}
+
+/** Opens the "Details and table" disclosure under the chart. */
+async function openChartDetails(page: Page) {
+  await page.getByText("Details and table", { exact: true }).click();
+}
 
 test.describe("dashboard", () => {
   test("renders the RED state with figures, chart, explanation and options", async ({ page }) => {
@@ -24,20 +34,102 @@ test.describe("dashboard", () => {
     // The headline is the engine's: it does not change when the AI explanation arrives.
     await expect(page.getByText("AI explanation", { exact: true })).toBeVisible();
     await expect(page.getByText(/no revenue, while salaries, rent/)).toBeVisible();
-    await expect(page.getByText(/calculated by deterministic code/)).toBeVisible();
+    // The explanation lives in the hero now; the separate "What is going on" card is gone.
+    await expect(hero.getByText(/no revenue, while salaries, rent/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "What is going on" })).toHaveCount(0);
+    await expect(page.getByText(/calculated by deterministic code/)).toHaveCount(0);
+    await expect(page.locator("footer")).toHaveText(
+      "Figures: deterministic code on your bank transactions. AI explains and suggests. Nothing happens without your approval.",
+    );
 
     await expect(page.getByRole("heading", { name: /^Balance: past 90 days and next 60 days$/ })).toBeVisible();
     await expect(page.locator(".recharts-line")).toHaveCount(3);
-    await expect(page.getByText(/lowest point of -€22,097.60 on 3 Jul 2025/)).toBeVisible();
+    // The prose summary is behind the chart's disclosure by default.
+    const chartSummary = page.getByText(/lowest point of -€22,097.60 on 3 Jul 2025/);
+    await expect(chartSummary).toBeHidden();
+    await openChartDetails(page);
+    await expect(chartSummary).toBeVisible();
+    await expect(page.getByText(/Day-to-day revenue and running costs are estimated/)).toBeVisible();
+    await expect(page.getByRole("region", { name: "Forecast table" })).toBeVisible();
 
     const options = page.getByRole("article");
     await expect(options).toHaveCount(4);
+    // The recommended option leads the list and carries the AI's reason.
+    await expect(options.first()).toHaveAccessibleName(/^Option E:/);
     const recommended = page.getByRole("article", { name: /Option E/ });
     await expect(recommended.getByText("Recommended")).toBeVisible();
-    await expect(recommended.getByText("Cheapest way to stay safe.")).toBeVisible();
+    await expect(recommended.getByText(/Why option E:/)).toBeVisible();
     await expect(recommended.getByText("€61.85")).toBeVisible();
-    await expect(page.getByText(/Why option E:/)).toBeVisible();
+    await expect(page.getByText("Recommended", { exact: true })).toHaveCount(1);
     await expect(page.getByRole("article", { name: /Option B/ }).getByText("No cost")).toBeVisible();
+    await expect(page.getByText("Select an option to preview it on the chart.")).toHaveCount(0);
+  });
+
+  test("an option keeps its description, notes and the reject action under Details", async ({ page }) => {
+    await mockApi(page);
+    await page.goto("/");
+
+    const recommended = page.getByRole("article", { name: /Option E/ });
+    const comment = recommended.getByText("Cheapest way to stay safe.");
+    const reject = recommended.getByRole("button", { name: "Reject option E" });
+    await expect(recommended.getByRole("button", { name: "Approve option E" })).toBeVisible();
+    await expect(comment).toBeHidden();
+    await expect(reject).toBeHidden();
+
+    await recommended.getByText("Details of option E").click();
+    await expect(comment).toBeVisible();
+    await expect(
+      recommended.getByText("Postpone the transfers to Zurich and cover the rest with a €15,000 credit line."),
+    ).toBeVisible();
+    await expect(recommended.getByText(/^Lowest balance on /)).toBeVisible();
+    await expect(recommended.getByText("Cost: interest at 9% p.a. on the amount used (assumption)")).toBeVisible();
+    await expect(recommended.getByText("Other cost: Requires a conversation with your brother")).toBeVisible();
+    await expect(reject).toBeVisible();
+
+    // Opening one card leaves the others collapsed.
+    await expect(page.getByRole("button", { name: "Reject option A" })).toBeHidden();
+  });
+
+  test("the first screen at 1440x900 shows the status, the whole chart and the recommended Approve", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockApi(page);
+    await page.goto("/");
+    await expect(page.getByText("AI explanation", { exact: true })).toBeVisible();
+    await expect(page.getByRole("article", { name: /Option E/ }).getByText("Why option E:")).toBeVisible();
+
+    await expect(page.getByText("Shortfall ahead").first()).toBeInViewport({ ratio: 1 });
+    await expect(page.locator(".chart__plot")).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole("button", { name: "Approve option E" })).toBeInViewport({ ratio: 1 });
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  });
+
+  test("the first screen at 1440x900 shows the tabs once an approval turned the outlook green", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockApi(page, { dashboard: approvedDashboard, decisions: [approvedDecision] });
+    await page.goto("/");
+    await expect(page.getByText("AI explanation", { exact: true })).toBeVisible();
+
+    await expect(page.getByText("No action needed")).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole("tablist", { name: "Decisions and plans" })).toBeInViewport({ ratio: 1 });
+  });
+
+  test("the workspace tabs appear only with the first dashboard, already opened on Options", async ({ page }) => {
+    await mockApi(page, { dashboardDelayMs: 1000 });
+    await page.goto("/");
+
+    await expect(page.getByRole("status", { name: "Loading your cash position" })).toBeVisible();
+    await expect(page.getByRole("tablist")).toHaveCount(0);
+
+    await expect(workspaceTab(page, /Options/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("the workspace tabs offer plans and history when the dashboard fails to load", async ({ page }) => {
+    await mockApi(page, { dashboard: apiError(500, "internal_error", "Something went wrong.") });
+    await page.goto("/");
+
+    await expect(page.getByText("Your forecast could not be loaded")).toBeVisible();
+    const tabs = page.getByRole("tablist", { name: "Decisions and plans" }).getByRole("tab");
+    await expect(tabs).toHaveText([/^My plans/, /^History/]);
   });
 
   test("shows the dashboard immediately while the assistant is still analysing", async ({ page }) => {
@@ -55,7 +147,11 @@ test.describe("dashboard", () => {
     await page.goto("/");
 
     await expect(page.getByText("Standard explanation (AI unavailable)")).toBeVisible();
-    await expect(page.getByText("Why no AI text: The language model did not respond in time.")).toBeVisible();
+    // The reason is one click away, inside "Why?".
+    const reason = page.getByText("Why no AI text: The language model did not respond in time.");
+    await expect(reason).toBeHidden();
+    await page.getByText("Why?", { exact: true }).click();
+    await expect(reason).toBeVisible();
     await expect(page.getByText("AI explanation", { exact: true })).toHaveCount(0);
   });
 
@@ -63,10 +159,10 @@ test.describe("dashboard", () => {
     await mockApi(page);
     await page.goto("/");
 
-    const why = page.getByRole("button", { name: "Why?" });
-    await expect(why).toHaveAttribute("aria-expanded", "false");
-    await why.click();
     const row = page.getByRole("row", { name: /Transfers to Zurich/ });
+    await expect(row).toBeHidden();
+    await page.getByText("Why?", { exact: true }).click();
+    await expect(page.getByText(/^Fixed costs due while your balance is under pressure \(.+\), largest first\.$/)).toBeVisible();
     await expect(row).toContainText("€12,000.00");
     await expect(row).toContainText("Can be postponed");
     await expect(page.getByRole("row", { name: /Salaries/ })).toContainText("Must be paid");
@@ -80,12 +176,16 @@ test.describe("dashboard", () => {
     await expect(legend).toContainText("Forecast with option E");
 
     const optionC = page.getByRole("article", { name: /Option C/ });
-    await optionC.getByRole("button", { name: "Preview on chart" }).click();
-    await expect(optionC.getByRole("button", { name: "Shown on chart" })).toHaveAttribute("aria-pressed", "true");
-    await expect(legend).toContainText("Forecast with option C: Shorter holiday");
-    await expect(page.getByText(/With option C \(Shorter holiday\) the lowest point is -€8,420.10/)).toBeVisible();
+    // The option letter is a visually hidden suffix, which the name computation separates with a space.
+    const previewC = optionC.getByRole("button", { name: /^Preview on chart\s*: option C$/ });
+    await expect(previewC).toHaveAttribute("aria-pressed", "false");
+    await previewC.click();
+    await expect(optionC.getByRole("button", { name: /^Shown on chart\s*: option C$/ })).toHaveAttribute("aria-pressed", "true");
+    await expect(legend).toContainText("Forecast with option C");
+    await expect(legend).not.toContainText("Forecast with option E");
 
-    await page.getByText("Show the forecast as a table").click();
+    await openChartDetails(page);
+    await expect(page.getByText(/With option C \(Shorter holiday\) the lowest point is -€8,420.10/)).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "With option C" })).toBeVisible();
   });
 
@@ -95,10 +195,20 @@ test.describe("dashboard", () => {
 
     await expect(page.getByText("Status: On track")).toBeVisible();
     await expect(page.getByText("No action needed")).toBeVisible();
+    await expect(page.getByText("No action needed Above your safety buffer for the next 60 days.")).toBeVisible();
     await expect(page.getByText("You have money you could put to work")).toBeVisible();
     await expect(page.getByRole("article")).toHaveCount(0);
-    await expect(page.getByText(/No plans yet/)).toBeVisible();
-    await expect(page.getByText(/No decisions yet/)).toBeVisible();
+
+    // With nothing to decide there is no Options tab and the workspace opens on the CFO advice.
+    await expect(workspaceTab(page, /Options/)).toHaveCount(0);
+    await expect(workspaceTab(page, /CFO advice/)).toHaveAttribute("aria-selected", "true");
+    await expect(workspaceTab(page, /My plans/)).toHaveText(/^My plans\s*0$/);
+    await expect(workspaceTab(page, /History/)).toHaveText(/^History\s*0$/);
+
+    await workspaceTab(page, /My plans/).click();
+    await expect(page.getByText("No plans yet. Tell the assistant what is coming up.")).toBeVisible();
+    await workspaceTab(page, /History/).click();
+    await expect(page.getByText("No decisions yet. Approvals and rejections are recorded here.")).toBeVisible();
   });
 
   test("shows the credit limit once a credit line is in place", async ({ page }) => {
@@ -108,6 +218,8 @@ test.describe("dashboard", () => {
     const hero = page.getByRole("region", { name: approvedDashboard.headline });
     await expect(hero.getByText("Credit line", { exact: true })).toBeVisible();
     await expect(hero.getByText("€15,000.00")).toBeVisible();
+    await expect(page.getByText("Within your credit line and safety buffer for the next 60 days.")).toBeVisible();
+    await workspaceTab(page, /My plans/).click();
     await expect(page.getByText("From an approved option").first()).toBeVisible();
   });
 
@@ -226,10 +338,10 @@ test.describe("dashboard", () => {
     await mockApi(page, { dashboard: approvedDashboard, events: approvedDashboard.events });
     await page.goto("/");
 
+    await expect(page.locator(".recharts-wrapper").getByText("Safety buffer (€3,000 above the credit limit)")).toBeVisible();
+    await openChartDetails(page);
     await expect(page.getByText(/The forecast for the next 60 days reaches its lowest point of -€10,097.60/)).toBeVisible();
     await expect(page.getByText(/If you do nothing/)).toHaveCount(0);
-    await expect(page.locator(".recharts-wrapper").getByText("Safety buffer (€3,000 above the credit limit)")).toBeVisible();
-    await page.getByText("Show the forecast as a table").click();
     await expect(page.getByRole("columnheader", { name: "Forecast", exact: true })).toBeVisible();
   });
 

@@ -31,7 +31,7 @@ export function ApprovalDialog({ decisions }: Props) {
             This is a demonstration. No real payment, transfer or credit request will be made.
           </p>
           <p>
-            Your lowest projected balance becomes <strong>{formatEur(option.new_min_balance_eur)}</strong> on{" "}
+            Your lowest projected balance becomes <strong className="dialog__figure">{formatEur(option.new_min_balance_eur)}</strong> on{" "}
             {formatDate(option.new_min_balance_date)} <StatusChip status={option.new_status} />
           </p>
           {creditNote !== null ? <p className="muted">{creditNote}</p> : null}
