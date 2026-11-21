@@ -12,7 +12,7 @@ import service
 from domain import DashboardQuery, DecisionStatus, EventDraft, EventSource, EventType
 from errors import AssistantUnavailableError
 from fakes import closure, expense
-from llm import LlmContextOverflowError, LlmHttpError, LlmTimeoutError
+from llm import GUARDRAIL_REPLY, LlmContextOverflowError, LlmGuardrailBlockedError, LlmHttpError, LlmTimeoutError
 import llm_chat
 from llm_chat import (
     ChatService,
@@ -988,6 +988,11 @@ def test_chat_endpoint_reports_saved_events_in_the_event_shape(repo):
         "category": None, "description": "Holidays", "original_utterance": "We close 1-21 June.", "source": "chat",
         "as_of_date": "2025-05-10", "decision_id": None, "created_at": "2026-11-21T10:27:53.432984Z",
     }]
+
+
+def test_a_blocked_message_is_returned_as_a_refusal(repo):
+    turn = handle(repo, FakeLlmClient(LlmGuardrailBlockedError("blocked")), "My email is a@b.com")
+    assert (turn.conversation_id, turn.reply, turn.tool_calls) == ("guardrail-blocked", GUARDRAIL_REPLY, ())
 
 
 def test_chat_endpoint_answers_503_when_the_model_is_down(repo):

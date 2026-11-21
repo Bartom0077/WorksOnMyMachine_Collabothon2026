@@ -93,6 +93,7 @@ class Settings:
     ogx_url: str
     ogx_model: str
     mcp_server_url: str
+    nemo_guardrails_url: str
     account_number: Optional[str]
     host: str
     port: int
@@ -103,6 +104,9 @@ def load_settings() -> Settings:
         ogx_url=os.environ.get("OGX_URL", "http://cfo-ogx-service.autonomous-cfo.svc.cluster.local:8321"),
         ogx_model=os.environ.get("OGX_MODEL", "vllm-cfo/cfo-llm"),
         mcp_server_url=os.environ.get("MCP_SERVER_URL", "http://amalfi-mcp.autonomous-cfo.svc.cluster.local:8080/mcp"),
+        # Empty disables the check. The NeMo service lives next to the model, shared by every app namespace.
+        nemo_guardrails_url=os.environ.get(
+            "NEMO_GUARDRAILS_URL", "http://cfo-nemo.cfo-models.svc.cluster.local").rstrip("/"),
         account_number=os.environ.get("ACCOUNT_NUMBER") or None,
         host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "8080")),

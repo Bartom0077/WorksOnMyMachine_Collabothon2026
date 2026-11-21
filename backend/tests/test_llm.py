@@ -7,8 +7,11 @@ import pytest
 
 from llm import (
     Deadline,
+    GUARDRAIL_REPLY,
+    Guardrails,
     JsonSchemaFormat,
     LlmContextOverflowError,
+    LlmGuardrailBlockedError,
     LlmHttpError,
     LlmProtocolError,
     LlmRequest,
@@ -215,3 +218,52 @@ def test_timeouts_and_connection_failures_are_distinguished():
     with pytest.raises(LlmUnreachableError) as unreachable:
         client_answering(refusing).respond(simple_request())
     assert (timeout.value.reason, unreachable.value.reason) == ("llm_timeout", "llm_unreachable")
+
+
+def guarded(ogx_handler, nemo_handler) -> OgxClient:
+    ogx = httpx.Client(base_url="http://ogx.test", transport=httpx.MockTransport(ogx_handler))
+    nemo = httpx.Client(base_url="http://nemo.test", transport=httpx.MockTransport(nemo_handler))
+    return OgxClient(ogx, "vllm-cfo/cfo-llm", Guardrails(nemo))
+
+
+def test_a_blocked_message_never_reaches_ogx():
+    def ogx(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("OGX must not be called")
+
+    def nemo(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/guardrail/checks"
+        assert json.loads(request.content)["messages"] == [{"role": "user", "content": "My email is a@b.com"}]
+        return httpx.Response(200, json={"status": "blocked"})
+
+    with pytest.raises(LlmGuardrailBlockedError):
+        guarded(ogx, nemo).respond(simple_request(input="My email is a@b.com"))
+
+
+def test_a_blocked_reply_is_replaced_and_the_tool_calls_stay():
+    checks = {"n": 0}
+
+    def nemo(request: httpx.Request) -> httpx.Response:
+        checks["n"] += 1
+        status = "success" if checks["n"] == 1 else "blocked"
+        return httpx.Response(200, json={"status": status})
+
+    answer = guarded(lambda request: httpx.Response(200, json=OGX_DOCUMENT), nemo).respond(simple_request())
+    assert answer.text == GUARDRAIL_REPLY
+    assert [call.name for call in answer.mcp_calls] == [
+        "propose_planned_event", "propose_planned_event", "save_planned_event"]
+
+
+def test_allowed_text_is_passed_through_unchanged():
+    def nemo(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "success"})
+
+    answer = guarded(lambda request: httpx.Response(200, json=OGX_DOCUMENT), nemo).respond(simple_request())
+    assert answer.text == "Should I include it in the forecast?"
+
+
+def test_an_unreachable_guardrail_stops_the_call():
+    def nemo(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    with pytest.raises(LlmUnreachableError):
+        guarded(lambda request: httpx.Response(200, json=OGX_DOCUMENT), nemo).respond(simple_request())

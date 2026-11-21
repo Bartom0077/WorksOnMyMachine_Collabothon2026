@@ -51,9 +51,11 @@ from domain import Dashboard, DashboardQuery, DecisionRecord, EventDraft, EventS
 from errors import AssistantUnavailableError
 from llm import (
     Deadline,
+    GUARDRAIL_REPLY,
     LlmClient,
     LlmContextOverflowError,
     LlmError,
+    LlmGuardrailBlockedError,
     LlmRequest,
     LlmResponse,
     LlmResponseNotFoundError,
@@ -245,6 +247,17 @@ class ChatService:
                 logger.info("The model recognised a removal request; asking again with the removal job.")
                 removal = RemovalContext((), saved_plans)
                 response = self._ask(dashboard, decisions, message, previous, waiting, removal, True, deadline)
+        except LlmGuardrailBlockedError:
+            logger.info("NeMo Guardrails blocked the owner's message before it reached the model.")
+            return ChatTurn(
+                conversation_id=previous.id if previous is not None else (conversation_id or "guardrail-blocked"),
+                reply=GUARDRAIL_REPLY,
+                pending_events=waiting.shown_drafts,
+                saved_events=(),
+                pending_removals=waiting.removals,
+                removed_events=(),
+                tool_calls=(),
+            )
         except LlmError as exc:
             logger.error("Chat failed (%s): %s", exc.reason, exc)
             recovered = self._turn_after_failure(repository, saved_plans, previous, waiting)
