@@ -65,12 +65,15 @@ class LlmProtocolError(LlmError):
 class McpAccess:
     """The MCP server offered to the model for one request, limited to the tools that request needs.
 
-    Every listed tool schema costs context tokens (all nine tools take about a third of the window).
+    Every listed tool schema costs context tokens (all eleven tools take about a third of the window).
+    ``removable_event_ids`` are the saved plans the owner has been shown for removal: the MCP server refuses
+    to remove any other plan in this request.
     """
 
     server_url: str
     as_of_date: date
     allowed_tools: tuple[str, ...]
+    removable_event_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -173,7 +176,9 @@ class OgxClient:
     def _request_with_retry(self, method: str, path: str, payload: Optional[dict],
                             timeout_seconds: Optional[float]) -> httpx.Response:
         """One retry for a dropped or refused connection (a stale keep-alive, an OGX restart). Timeouts are not
-        retried. Repeating a request is safe: the only write the model can make, save_planned_event, is idempotent."""
+        retried. Repeating a request is safe: the writes the model can make are idempotent (save_planned_event does
+        not insert a plan twice and answers "already_saved"; remove_planned_event answers "already_removed" for a
+        confirmed plan that is gone, which the chat reports to the owner as removed)."""
         timeout = self._http.timeout if timeout_seconds is None else self._timeout(timeout_seconds)
         for attempt in range(_CONNECTION_ATTEMPTS):
             try:
@@ -235,10 +240,17 @@ def _mcp_tool(access: McpAccess) -> dict:
         "type": "mcp",
         "server_label": MCP_SERVER_LABEL,
         "server_url": access.server_url,
-        "headers": {"X-As-Of-Date": access.as_of_date.isoformat()},
+        "headers": _mcp_headers(access),
         "require_approval": "never",
         "allowed_tools": list(access.allowed_tools),
     }
+
+
+def _mcp_headers(access: McpAccess) -> dict[str, str]:
+    headers = {"X-As-Of-Date": access.as_of_date.isoformat()}
+    if access.removable_event_ids:
+        headers["X-Removable-Event-Ids"] = ",".join(str(event_id) for event_id in access.removable_event_ids)
+    return headers
 
 
 def _message_texts(item: dict) -> list[str]:

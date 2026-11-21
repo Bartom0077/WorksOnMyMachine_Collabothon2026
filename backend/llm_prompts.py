@@ -4,11 +4,13 @@ by the backend (the dossier) or come from MCP tools; the prompts forbid the mode
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Sequence
+from typing import Optional, Sequence
 
-from domain import Dashboard, DecisionRecord, EventDraft, RescueOption, RiskStatus
+from domain import Dashboard, DecisionRecord, EventDraft, PlannedEvent, RescueOption, RiskStatus
+from schemas import EventOut
 from events import add_months
 from kpi_engine.money import money_json
 from service import build_dossier, build_fallback_recommendation
@@ -80,7 +82,7 @@ _CHAT_INSTRUCTIONS = """{persona}
 Today is {weekday}, {today}. This is the real current date for this conversation: never use another year or \
 "today" from your own knowledge.
 
-You have exactly two jobs.
+You have exactly {job_count} jobs.
 
 JOB 1 - RECORD THE OWNER'S FUTURE PLANS
 When the owner describes something that will happen in the future, turn each such plan into a planned event of \
@@ -152,20 +154,55 @@ what each one does and its interest cost. Use it when the owner asks what was ap
 nothing has been decided yet.
 - Answer in at most 5 short sentences and do not end an explanation with a question.
 
-LIMITS
+{removal_job}LIMITS
 - You cannot move money. If the owner asks you to pay, transfer or send money now or today, to take a loan or to \
 contact the bank, do not call any tool. Say clearly that you cannot execute payments and that you only plan and \
 simulate, and offer to add it to the forecast as a planned expense instead.
-- You cannot remove or change a plan that is already saved, and no tool can. If the owner asks for that, do not \
-call any tool: say that you cannot do it and that the owner can remove the plan with the Remove button next to it \
-in the "My plans" list, then describe the new plan to you again.
-- You never decide for the owner. Rescue options are not plans: you cannot approve, reject, start or save \
+{saved_plan_limit}- You never decide for the owner. Rescue options are not plans: you cannot approve, reject, start or save \
 them, and you never ask whether to include an option in the forecast. If the owner asks you to approve or choose \
 one, answer like this: "I can't approve options for you. To go ahead with an option, press Approve on its card."
 - If a question is not about the pizzeria's money or plans, say briefly that you can only help with those.
 
 SITUATION (JSON):
 {situation}"""
+
+_REMOVAL_JOB = """JOB 3 - REMOVE A SAVED PLAN
+This job is only for a message in which the owner asks to remove, delete, cancel or forget a plan that is \
+already saved. A message that describes something new that will happen is JOB 1, also when plans are saved.
+"planned_events" in the SITUATION below lists every plan that is saved right now, each with its "id" and its \
+"source". Find the plan the owner means in that list by its description, its date or its amount. Then exactly \
+one of these cases applies:
+- No saved plan matches (or the list is empty): say that there is no such plan and name the plans that are \
+saved. Call no tool and do not point to any button.
+- Several plans could be meant, or the owner says "my plans", "the plan" or "everything" while more than one \
+plan is saved: name the saved plans and ask which one to remove. Call no tool.
+- The plan has source "agent" (a credit line, a postponed payment): it belongs to a rescue option the owner \
+approved. Call no tool. Say that it cannot be removed in the chat and that the owner can withdraw it with the \
+"Withdraw option" button next to it in the "My plans" list.
+- Exactly one plan with source "chat" is meant: {removal_rule}
+You cannot change a saved plan. If the owner wants to change one, remove it as described here and then record \
+the new plan with JOB 1.
+
+"""
+# The removal job, the plan ids and the removal tools are part of a turn only when the owner asks for a removal:
+# with them in the prompt the small model handles new plans worse (wrong dates, tool calls written as text).
+# Otherwise one of these two lines remains. While no plan from the chat is saved there is nothing to remove:
+_NOTHING_REMOVABLE_LIMIT = (
+    "- No plan from the chat is saved right now, so you cannot remove or change a saved plan in this message, and "
+    "no tool can. If the owner asks to remove, delete, cancel or change a plan, do not call any tool: say that "
+    "there is no such plan among the saved plans and name the plans in \"planned_events\" (or say that no plans "
+    "are saved). A plan that belongs to an approved rescue option (a credit line, a postponed payment) is "
+    "withdrawn by the owner with the \"Withdraw option\" button next to it in the \"My plans\" list.\n"
+)
+# While chat plans are saved, the model hands a removal request back to the backend with this word, and the
+# backend asks again with the removal job (``llm_chat``). The owner never sees it.
+REMOVAL_REQUEST_SIGNAL = "REMOVE_PLAN_REQUEST"
+_REMOVAL_ON_REQUEST_LIMIT = (
+    "- Removing a saved plan is handled in a separate step, not in this message. If the owner asks to remove, "
+    "delete, cancel, drop or forget a plan that is already saved, or to change one, or says that something that "
+    "is planned will not happen after all, do not call any tool and do not explain anything: reply with exactly "
+    f"{REMOVAL_REQUEST_SIGNAL} and nothing else.\n"
+)
 
 _SAVE_ALLOWED_RULE = (
     "These checked plans have been shown to the owner and are waiting for a yes. They are NOT saved yet: "
@@ -182,20 +219,71 @@ _SAVE_NOT_ALLOWED_RULE = (
     "propose_planned_event for that plan and ask once more."
 )
 
-UPDATE_COMMENT_INSTRUCTIONS = f"""{_PERSONA}
+_PROPOSE_REMOVAL_RULE = (
+    "call propose_planned_event_removal with its id right away, in the same message, before you answer. This "
+    "only checks the plan; nothing is removed. Never ask whether to remove a plan without calling it first. "
+    "Then tell the owner which plan it is and ask whether to remove it. Stop and wait for the owner's answer, "
+    "also when the owner said \"immediately\" or confirmed in advance."
+)
+_REMOVAL_ALLOWED_RULE = (
+    "if it is not one of the plans waiting below, " + _PROPOSE_REMOVAL_RULE + "\n"
+    "These saved plans have been shown to the owner for removal and are waiting for a yes. They are NOT removed "
+    "yet: {removals}\n"
+    "Only when the owner's latest message clearly says yes to removing one of them (for example \"yes\", "
+    "\"remove it\", \"go ahead\") call remove_planned_event with the id of that plan. Remove only the plans the "
+    "owner said yes to. If the owner says no or wants to keep the plan, call no tool and say that the plan stays "
+    "in the forecast. If the owner asks something else, do not remove."
+)
+_REMOVAL_NOT_ALLOWED_RULE = (
+    _PROPOSE_REMOVAL_RULE + "\n"
+    "Removing itself is not possible in this message, because the owner has not yet been shown which plan would "
+    "be removed. Never say that a plan was removed or deleted."
+)
 
-The owner's plan has just been saved and the forecasting engine has recalculated the forecast. Answer the owner in \
+_UPDATE_COMMENT_TEMPLATE = f"""{_PERSONA}
+
+{{what_happened}} and the forecasting engine has recalculated the forecast. Answer the owner in \
 at most 3 short sentences:
-1. Start with "Done" and say which plan is now included in the forecast.
+1. Start with "Done" and say {{what_to_say}}.
 2. Say what the forecast shows now, using the UPDATED FORECAST facts. Copy amounts and dates exactly (keep \
 "below zero" when it is there); never calculate a number.
 3. Only if rescue options are on the screen: say that the owner can approve or reject them there.
 Do not ask a question and do not call tools."""
 
+UPDATE_COMMENT_INSTRUCTIONS = _UPDATE_COMMENT_TEMPLATE.format(
+    what_happened="The owner's plan has just been saved",
+    what_to_say="which plan is now included in the forecast")
+REMOVAL_COMMENT_INSTRUCTIONS = _UPDATE_COMMENT_TEMPLATE.format(
+    what_happened="The owner's plan has just been removed from the saved plans",
+    what_to_say="which plan was removed and is no longer in the forecast")
+PLANS_CHANGED_COMMENT_INSTRUCTIONS = _UPDATE_COMMENT_TEMPLATE.format(
+    what_happened="The owner's plans have just been changed (one saved, one removed)",
+    what_to_say="which plan is now included in the forecast and which one was removed")
 
-def chat_instructions(dashboard: Dashboard, confirmable: Sequence[EventDraft],
-                      recent_decisions: Sequence[DecisionRecord]) -> str:
-    """``confirmable`` are the checked plans the owner may say yes to now; saving is only described if there are any."""
+
+def update_comment_instructions(saved: bool, removed: bool) -> str:
+    """Instructions for the comment on the recalculated forecast, matching what the turn really changed."""
+    if saved and removed:
+        return PLANS_CHANGED_COMMENT_INSTRUCTIONS
+    return REMOVAL_COMMENT_INSTRUCTIONS if removed else UPDATE_COMMENT_INSTRUCTIONS
+
+
+@dataclass(frozen=True)
+class RemovalContext:
+    """The owner asks to remove a plan in this turn, or was asked to confirm a removal. ``confirmable`` are the saved plans the owner has
+    been shown for removal and may say yes to now; the removal itself is only described if there are any.
+    ``saved_plans`` are all stored plans; the model picks the one the owner means from them by id."""
+
+    confirmable: Sequence[EventOut] = ()
+    saved_plans: Sequence[PlannedEvent] = ()
+
+
+def chat_instructions(dashboard: Dashboard, confirmable: Sequence[EventDraft], removal: Optional[RemovalContext],
+                      recent_decisions: Sequence[DecisionRecord], removal_on_request: bool = False) -> str:
+    """``confirmable`` are the checked plans the owner may say yes to now; saving is only described if there are
+    any. The job of removing a saved plan (and the plan ids it needs) is part of the prompt only with ``removal``.
+    Without it, ``removal_on_request`` (a plan from the chat is saved) tells the model to hand a removal request
+    back with ``REMOVAL_REQUEST_SIGNAL``; otherwise the prompt says that there is nothing to remove."""
     example_day = add_months(dashboard.as_of_date, _EXAMPLE_MONTHS_AHEAD).replace(day=_EXAMPLE_DAY)
     return _CHAT_INSTRUCTIONS.format(
         persona=_PERSONA,
@@ -206,7 +294,11 @@ def chat_instructions(dashboard: Dashboard, confirmable: Sequence[EventDraft],
         example_year_month=example_day.strftime("%Y-%m"),
         status_legend=_STATUS_LEGEND,
         save_rule=_save_rule(confirmable),
-        situation=situation_json(dashboard, recent_decisions),
+        job_count="two" if removal is None else "three",
+        removal_job="" if removal is None else _REMOVAL_JOB.format(removal_rule=_removal_rule(removal.confirmable)),
+        saved_plan_limit=("" if removal is not None
+                          else _REMOVAL_ON_REQUEST_LIMIT if removal_on_request else _NOTHING_REMOVABLE_LIMIT),
+        situation=situation_json(dashboard, recent_decisions, None if removal is None else removal.saved_plans),
     )
 
 
@@ -215,6 +307,16 @@ def _save_rule(confirmable: Sequence[EventDraft]) -> str:
         return _SAVE_NOT_ALLOWED_RULE
     drafts = json.dumps([draft_json(draft) for draft in confirmable], ensure_ascii=False)
     return _SAVE_ALLOWED_RULE.format(drafts=drafts)
+
+
+def _removal_rule(removable: Sequence[EventOut]) -> str:
+    if not removable:
+        return _REMOVAL_NOT_ALLOWED_RULE
+    return _REMOVAL_ALLOWED_RULE.format(removals=_removals_json(removable))
+
+
+def _removals_json(removable: Sequence[EventOut]) -> str:
+    return json.dumps([{"id": event.id, **draft_json(event)} for event in removable], ensure_ascii=False)
 
 
 def recommendation_input(dossier: dict) -> str:
@@ -234,8 +336,8 @@ def update_comment_input(dashboard: Dashboard) -> str:
     ])
 
 
-def describe_draft(draft: EventDraft) -> str:
-    """One checked plan in plain words, for confirmation questions written by code."""
+def describe_draft(draft: EventDraft | EventOut) -> str:
+    """One plan from the chat in plain words, for confirmation questions written by code."""
     if draft.amount_eur is None:
         return f"{draft.description}: closed from {_full_day(draft.date_from)} to {_full_day(draft.date_to)}"
     return (f"{draft.description}: {draft.event_type.value} of {format_eur(draft.amount_eur)} on "
@@ -251,12 +353,16 @@ def _balance_in_words(balance_eur: Decimal) -> str:
     return f"{format_eur(-balance_eur)} below zero" if balance_eur < 0 else format_eur(balance_eur)
 
 
-def carried_context_input(message: str, last_reply: str, pending: Sequence[EventDraft]) -> str:
+def carried_context_input(message: str, last_reply: str, pending: Sequence[EventDraft],
+                          removable: Sequence[EventOut]) -> str:
     """First message of a fresh thread that replaces a conversation too long for the model's context window."""
     lines = ["[Summary of the earlier conversation]", f"Your last message to the owner was: {last_reply}"]
     if pending:
         drafts = json.dumps([draft_json(draft) for draft in pending], ensure_ascii=False)
         lines.append(f"Checked plans the owner has seen and has not yet confirmed: {drafts}")
+    if removable:
+        lines.append("Saved plans the owner was asked whether to remove and has not yet answered about: "
+                     f"{_removals_json(removable)}")
     lines += ["[The owner's new message]", message]
     return "\n".join(lines)
 
@@ -323,14 +429,26 @@ def _result_in_words(option: RescueOption) -> str:
     return "safe"
 
 
-def situation_json(dashboard: Dashboard, recent_decisions: Sequence[DecisionRecord]) -> str:
-    """What the chat model knows: the dossier, the engine's own explanation texts and the latest decisions."""
+def situation_json(dashboard: Dashboard, recent_decisions: Sequence[DecisionRecord],
+                   removable_from: Optional[Sequence[PlannedEvent]] = None) -> str:
+    """What the chat model knows: the dossier, the engine's own explanation texts and the latest decisions.
+    ``removable_from`` (all stored plans) replaces "planned_events" by what removing a saved plan needs: every
+    plan with its id and its source, also those outside the forecast horizon."""
     engine_texts = build_fallback_recommendation(dashboard)
     situation = {**recommendation_dossier(dashboard), "engine_explanation": engine_texts.explanation,
                  "engine_recommendation_reason": engine_texts.rationale,
                  "recent_decisions": [_decision_view(decision) for decision in recent_decisions]}
+    if removable_from is not None:
+        situation["planned_events"] = [_saved_plan_view(event) for event in removable_from]
     del situation[FIXED_COSTS_KEY]  # per-period sums the chat model mistook for monthly amounts
     return json.dumps(situation, ensure_ascii=False)
+
+
+def _saved_plan_view(event: PlannedEvent) -> dict:
+    """A saved plan with the id and the source the removal tools need."""
+    return {"id": event.id, "source": event.source.value, "type": event.event_type.value,
+            "from": _iso(event.date_from), "to": _iso(event.date_to), "amount_eur": money_json(event.amount_eur),
+            "description": event.description}
 
 
 def _decision_view(decision: DecisionRecord) -> dict:
@@ -339,7 +457,7 @@ def _decision_view(decision: DecisionRecord) -> dict:
             "interest_cost_eur": money_json(decision.snapshot.cost_eur)}
 
 
-def draft_json(draft: EventDraft) -> dict:
+def draft_json(draft: EventDraft | EventOut) -> dict:
     return {"event_type": draft.event_type.value, "date_from": _iso(draft.date_from), "date_to": _iso(draft.date_to),
             "amount_eur": money_json(draft.amount_eur), "description": draft.description}
 

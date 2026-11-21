@@ -1,5 +1,5 @@
-"""Amalfi data MCP server — read tools for bank data and KPI snapshots, plus one constrained write
-(a planned event confirmed by the owner in the chat) for the CFO agent.
+"""Amalfi data MCP server — read tools for bank data and KPI snapshots, plus two constrained writes
+(saving and removing a planned event the owner confirmed in the chat) for the CFO agent.
 
 The product's chat offers the model only the planned-event tools and get_fixed_obligations; balances, the
 forecast and rescue options come from the backend (see README.md, "Which tools the product uses").
@@ -7,14 +7,15 @@ forecast and rescue options come from the backend (see README.md, "Which tools t
 Run:  python app.py            (streamable HTTP on 0.0.0.0:8080, MCP endpoint /mcp, health /health)
 Env:  DATABASE_URL or PG* vars; AMALFI_AS_OF_DATE (optional server-wide cutoff); MCP_HOST / MCP_PORT.
 Per-request cutoff: HTTP header ``X-As-Of-Date: YYYY-MM-DD`` (set by the agent orchestrator); it is the
-simulated "today" and is required by the planned-event tools.
+simulated "today" and is required by the tools that create planned events. ``X-Removable-Event-Ids`` (comma
+separated ids, also set by the orchestrator) lists the plans the owner confirmed for removal in this turn.
 """
 from __future__ import annotations
 
 import logging
 import os
 from datetime import date
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Callable, List, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
@@ -38,6 +39,8 @@ planned events.
 * Planned events (closure, expense, inflow) the owner mentions: call propose_planned_event first, ask the
   owner to confirm, and only after an explicit yes call save_planned_event. list_planned_events shows what
   is already saved.
+* Removing a saved plan works the same way: propose_planned_event_removal with the plan's id, ask the owner
+  to confirm, and only after an explicit yes call remove_planned_event.
 * get_fixed_obligations lists the documented recurring payments.
 * Analyst tools (get_data_overview, get_kpi_snapshot, get_kpi_history, get_cashflow_summary,
   get_transactions) describe the past. The KPI snapshot carries its own 30-day outlook that ignores planned
@@ -55,12 +58,22 @@ mcp = FastMCP(
 )
 
 
-def _as_of_header(ctx: Context) -> Optional[str]:
+def _header(ctx: Context, name: str) -> Optional[str]:
     try:
         request = ctx.request_context.request
     except (LookupError, ValueError):  # no HTTP request in scope (e.g. stdio transport)
         return None
-    return request.headers.get("x-as-of-date") if request is not None else None
+    return request.headers.get(name) if request is not None else None
+
+
+def _as_of_header(ctx: Context) -> Optional[str]:
+    return _header(ctx, "x-as-of-date")
+
+
+def _removable_event_ids(ctx: Context) -> frozenset[int]:
+    """Ids from the X-Removable-Event-Ids header: the plans the owner confirmed for removal. No header, no removal."""
+    parts = (part.strip() for part in (_header(ctx, "x-removable-event-ids") or "").split(","))
+    return frozenset(int(part) for part in parts if part.isdecimal())
 
 
 def _cutoff(ctx: Context) -> Optional[date]:
@@ -83,14 +96,17 @@ def _run(ctx: Context, fn, **kwargs) -> dict:
         return fn(conn, cutoff, **kwargs)
 
 
-def _rejected(flag: str, tool: str, exc: ToolInputError) -> dict:
-    """A validation failure of a planned-event tool as a normal result.
+def _checked(flag: str, tool: str, run: Callable[[], dict]) -> dict:
+    """Run a planned-event tool; a validation failure becomes a normal result ``{flag: false, "error": ...}``.
 
     OGX reduces MCP tool errors to "Error (code 1): None" in its mcp_call output items, which would hide
     the reason from the backend; a regular result keeps the message visible to the model and the backend.
     """
-    log.info("tool=%s rejected: %s", tool, exc)
-    return {flag: False, "error": str(exc)}
+    try:
+        return run()
+    except ToolInputError as exc:
+        log.info("tool=%s rejected: %s", tool, exc)
+        return {flag: False, "error": str(exc)}
 
 
 DateStr = Annotated[str, Field(description="Date in YYYY-MM-DD format.")]
@@ -106,6 +122,7 @@ EventEnd = Annotated[Optional[str], Field(
 EventAmount = Annotated[Optional[float], Field(
     description="Positive EUR amount; required for expense/inflow, omit for closure.")]
 EventDescription = Annotated[str, Field(description="Short label, e.g. 'Summer holiday closure' or 'New oven'.")]
+SavedEventId = Annotated[int, Field(description="The \"id\" of the plan as returned by list_planned_events.")]
 
 
 @mcp.tool()
@@ -210,7 +227,8 @@ def get_fixed_obligations(
 @mcp.tool()
 def list_planned_events(ctx: Context) -> dict:
     """Planned events already saved for the forecast (closures, one-off expenses and inflows, approved
-    rescue actions) that end after the analysis date, i.e. still affect the forecast."""
+    rescue actions) that end after the analysis date, i.e. still affect the forecast. Each has an "id" and a
+    "source": "chat" = told by the owner in the chat, "agent" = measure of an approved rescue option."""
     return _run(ctx, planned_events.list_planned_events)
 
 
@@ -227,11 +245,9 @@ def propose_planned_event(
     once dates and amount are known, then ask the owner to confirm the returned confirmation_prompt.
     If it returns valid=false, fix the call or ask the owner; never guess missing dates or amounts."""
     log.info("tool=propose_planned_event type=%s from=%s to=%s amount=%s", event_type, date_from, date_to, amount_eur)
-    try:
-        return planned_events.propose_planned_event(_today(ctx), event_type=event_type, date_from=date_from,
-                                                    date_to=date_to, amount_eur=amount_eur, description=description)
-    except ToolInputError as exc:
-        return _rejected("valid", "propose_planned_event", exc)
+    return _checked("valid", "propose_planned_event", lambda: planned_events.propose_planned_event(
+        _today(ctx), event_type=event_type, date_from=date_from, date_to=date_to, amount_eur=amount_eur,
+        description=description))
 
 
 @mcp.tool()
@@ -247,14 +263,49 @@ def save_planned_event(
     """Save a planned event into the forecast. Call ONLY after the owner explicitly confirmed the proposal
     from propose_planned_event; use the same values. saved=false with an error means nothing was written."""
     log.info("tool=save_planned_event type=%s from=%s to=%s amount=%s", event_type, date_from, date_to, amount_eur)
-    try:
+
+    def save() -> dict:
         today = _today(ctx)
         with connect_write() as conn:
             return planned_events.save_planned_event(conn, today, event_type=event_type, date_from=date_from,
                                                      date_to=date_to, amount_eur=amount_eur, description=description,
                                                      original_utterance=original_utterance)
-    except ToolInputError as exc:
-        return _rejected("saved", "save_planned_event", exc)
+
+    return _checked("saved", "save_planned_event", save)
+
+
+@mcp.tool()
+def propose_planned_event_removal(ctx: Context, event_id: SavedEventId) -> dict:
+    """Look up a saved plan the owner wants to remove, WITHOUT removing it. Then ask the owner to confirm the
+    returned confirmation_prompt. valid=false with an error means the plan cannot be removed in the chat."""
+    log.info("tool=propose_planned_event_removal id=%s", event_id)
+
+    def propose() -> dict:
+        with connect() as conn:
+            return planned_events.propose_planned_event_removal(conn, event_id)
+
+    return _checked("valid", "propose_planned_event_removal", propose)
+
+
+@mcp.tool()
+def remove_planned_event(ctx: Context, event_id: SavedEventId) -> dict:
+    """Remove a saved plan from the forecast. Call ONLY after the owner explicitly confirmed the removal shown
+    by propose_planned_event_removal. removed=false with an error means nothing was removed;
+    already_removed=true means the plan was gone before this call."""
+    confirmed_ids = _removable_event_ids(ctx)
+    log.info("tool=remove_planned_event id=%s confirmed_ids=%s", event_id, sorted(confirmed_ids))
+
+    def remove() -> dict:
+        with connect_write() as conn:
+            result = planned_events.remove_planned_event(conn, event_id, confirmed_ids)
+        # The DELETE is physical and committed here: the log line is the only record of what the plan was.
+        if result.get("removed"):
+            log.info("tool=remove_planned_event removed event=%s", result["event"])
+        else:
+            log.info("tool=remove_planned_event id=%s was already gone; nothing removed", event_id)
+        return result
+
+    return _checked("removed", "remove_planned_event", remove)
 
 
 @mcp.custom_route("/health", methods=["GET"])

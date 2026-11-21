@@ -286,6 +286,9 @@ AI rozpoznaje **typ zdarzenia** i jego parametry, a kod nakłada je na prognozę
 
 Jedna wypowiedź może zawierać kilka zdarzeń; każde jest potwierdzane osobno lub w jednym zbiorczym podsumowaniu.
 Zdarzenia można usunąć z listy „Moje plany" w UI (przycisk „usuń").
+Plan dodany przez czat można też usunąć przez czat (np. *„usuń zakup pieca"*), w tym samym schemacie:
+propozycja → potwierdzenie użytkownika → wykonanie (asystent pokazuje plan do usunięcia, a usuwa go dopiero po „tak").
+Wpisów utworzonych przez agenta nie usuwa się w czacie – wycofuje się je razem z zatwierdzoną opcją („Wycofaj opcję” w „Moich planach”).
 
 **LLM nie liczy wpływu zdarzenia na saldo.** Zamienia tekst na ustrukturyzowany wpis; efekt liczy kod (8.2).
 

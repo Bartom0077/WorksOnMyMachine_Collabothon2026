@@ -74,3 +74,31 @@ def save_duplicate(event_id: int = 7, **fields) -> McpCall:
     return mcp_call("save_planned_event", {"saved": False, "already_saved": True,
                                            "event": saved_event(event_id, **fields),
                                            "note": "This event is already in the plans; nothing was added."})
+
+
+def propose_removal_ok(event_id: int = 7, **fields) -> McpCall:
+    return mcp_call("propose_planned_event_removal", {
+        "valid": True, "event": saved_event(event_id, **fields),
+        "confirmation_prompt": "Should I remove it from your plans?"}, {"event_id": event_id})
+
+
+def propose_removal_rejected(message: str) -> McpCall:
+    return mcp_call("propose_planned_event_removal", {"valid": False, "error": message})
+
+
+def remove_ok(event_id: int = 7, **fields) -> McpCall:
+    return mcp_call("remove_planned_event", {"removed": True, "event": saved_event(event_id, **fields)},
+                    {"event_id": event_id})
+
+
+def remove_refused(event_id: int = 7) -> McpCall:
+    return mcp_call("remove_planned_event", {
+        "removed": False, "error": f"Planned event {event_id} was not removed: the owner has not confirmed its "
+                                   "removal yet."}, {"event_id": event_id})
+
+
+def remove_already_gone(event_id: int = 7) -> McpCall:
+    return mcp_call("remove_planned_event", {
+        "removed": False, "already_removed": True, "event_id": event_id,
+        "note": f"Planned event {event_id} is already gone from the plans; nothing was left to remove."},
+        {"event_id": event_id})

@@ -63,7 +63,7 @@ def recommend(params: SimulationParams, repository: RepositoryDep,
              responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}})
 def chat(request: ChatRequest, repository: RepositoryDep,
          assistant: Annotated[ChatService, Depends(get_chat_service)]) -> ChatResponse:
-    """One turn with the scenario assistant. Planned events are written by the MCP server; this code only
-    removes a plan again when the model saved it without the owner's confirmation."""
+    """One turn with the scenario assistant. Planned events are written and removed by the MCP server; this
+    code only removes a plan again when the model saved it without the owner's confirmation."""
     turn = assistant.handle(repository, request.to_query(), request.message, request.conversation_id)
     return ChatResponse.model_validate(turn)

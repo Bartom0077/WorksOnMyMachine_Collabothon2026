@@ -17,6 +17,7 @@ const LLM_TIMEOUT_MS = 150_000;
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 375, height: 812 };
 const HOLIDAY_PLAN = "We are closing for holidays from 1 to 21 June.";
+const REMOVAL_REQUEST = "Please remove the holiday closure from my plans.";
 
 const FIGURES = {
   balanceToday: "€3,205.69",
@@ -254,5 +255,62 @@ test.describe("demo story on the deployed application", () => {
     await expect(decisionRow).toContainText("Withdrawn");
     await expect(decisionRow).toContainText("Reversed: no longer in the forecast");
     await capture("10-option-withdrawn-desktop");
+  });
+
+  // --- removing a plan through the chat (two turns: the assistant shows the plan, the owner confirms) ---
+
+  test("a plan added in the chat is in the forecast again", async () => {
+    expect((await page.request.post("/api/demo/reset")).status()).toBe(204);
+    await page.goto("/"); // a fresh conversation on 10 May 2025
+    await expect(page.getByText(/No plans yet/)).toBeVisible();
+    await expect(heroFigure(FIGURES.lowestWithoutPlans)).toBeVisible();
+
+    const input = page.getByLabel("Message to the assistant");
+    await input.fill(HOLIDAY_PLAN);
+    await input.press("Enter");
+    const confirmation = page.getByRole("group", { name: "Plan awaiting your confirmation" });
+    await expect(confirmation).toBeVisible({ timeout: LLM_TIMEOUT_MS });
+    await confirmation.getByRole("button", { name: "Yes, include it" }).click();
+
+    await expect(page.getByText("Forecast updated with your plans.")).toBeVisible({ timeout: LLM_TIMEOUT_MS });
+    await expect(plans().getByRole("listitem")).toHaveCount(1);
+    await expect(heroFigure(FIGURES.lowestWithClosure)).toBeVisible();
+    await waitForExplanation(); // the model is free again before the next chat message
+  });
+
+  test("asked to remove the plan, the assistant shows it and removes nothing yet", async () => {
+    const input = page.getByLabel("Message to the assistant");
+    await input.fill(REMOVAL_REQUEST);
+    await input.press("Enter");
+
+    const removal = page.getByRole("group", { name: "Plan awaiting removal" });
+    await expect(removal).toBeVisible({ timeout: LLM_TIMEOUT_MS });
+    await expect(removal).toContainText("Closure");
+    await expect(removal).toContainText("1 Jun – 21 Jun 2025");
+    await expect(removal.getByRole("button", { name: "Yes, remove it" })).toBeEnabled();
+    await expect(removal.getByRole("button", { name: "Keep it" })).toBeEnabled();
+    // Nothing is removed and nothing changes before the owner confirms.
+    const plan = plans().getByRole("listitem");
+    await expect(plan).toHaveCount(1);
+    await expect(plan).toContainText("Closure · 1 Jun – 21 Jun 2025");
+    await expect(heroFigure(FIGURES.lowestWithClosure)).toBeVisible();
+    const stored = (await (await page.request.get("/api/events")).json()) as { events: unknown[] };
+    expect(stored.events).toHaveLength(1);
+    await captureKeyState("11-removal-awaiting-confirmation");
+  });
+
+  test("confirming the removal takes the plan out and restores the earlier forecast", async () => {
+    const removal = page.getByRole("group", { name: "Plan awaiting removal" });
+    await removal.getByRole("button", { name: "Yes, remove it" }).click();
+
+    await expect(page.getByText(/^Removed from your plans:/)).toBeVisible({ timeout: LLM_TIMEOUT_MS });
+    await expect(plans().getByText(/No plans yet/)).toBeVisible();
+    await expect(heroFigure(FIGURES.lowestWithoutPlans)).toBeVisible();
+    await expect(heroFigure(FIGURES.lowestDate)).toBeVisible();
+    // The answered card cannot be used a second time.
+    await expect(removal.getByRole("button", { name: "Yes, remove it" })).toBeDisabled();
+    const stored = (await (await page.request.get("/api/events")).json()) as { events: unknown[] };
+    expect(stored.events).toHaveLength(0);
+    await captureKeyState("12-removed-through-chat");
   });
 });

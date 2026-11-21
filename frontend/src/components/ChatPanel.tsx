@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { Chat, ChatEntry } from "../hooks/useChat";
 import { EVENT_TYPE_LABELS, formatDateRange, formatEur, humanizeToolName } from "../lib/format";
-import type { EventDraft, ToolCall } from "../types/api";
+import type { PlannedEvent, ToolCall } from "../types/api";
 import { ErrorNotice } from "./Feedback";
 import { Icon } from "./Icon";
 
@@ -11,6 +11,10 @@ const SUGGESTED_PROMPTS = [
   "Why is my balance dropping?",
 ];
 const CONFIRM_MESSAGE = "Yes, please include it in the forecast.";
+const REMOVE_MESSAGE = "Yes, please remove it from my plans.";
+const REMOVE_ALL_MESSAGE = "Yes, please remove them from my plans.";
+const KEEP_MESSAGE = "No, keep it.";
+const KEEP_ALL_MESSAGE = "No, keep them.";
 const DEFAULT_PLACEHOLDER = "Describe a plan or ask a question…";
 const CORRECTION_PLACEHOLDER = "Tell me what to change, e.g. “from 2 to 15 June”";
 
@@ -18,9 +22,12 @@ interface Props {
   chat: Chat;
 }
 
-function DraftCard({ draft }: { draft: EventDraft }) {
+/** What a plan card shows: a checked proposal and a saved plan both have these fields. */
+type PlanSummary = Pick<PlannedEvent, "event_type" | "date_from" | "date_to" | "amount_eur" | "description">;
+
+function PlanCard({ plan: draft, removal = false }: { plan: PlanSummary; removal?: boolean }) {
   return (
-    <div className="draft">
+    <div className={removal ? "draft draft--removal" : "draft"}>
       <p className="draft__type">{EVENT_TYPE_LABELS[draft.event_type]}</p>
       <dl className="draft__facts">
         <div>
@@ -53,14 +60,56 @@ function DataUsed({ toolCalls }: { toolCalls: ToolCall[] }) {
   );
 }
 
+interface PlanConfirmationProps {
+  /** Accessible name of the group. */
+  label: string;
+  /** Visible question above the plans; the add flow asks it in the assistant's own message instead. */
+  title?: string;
+  plans: PlanSummary[];
+  removal?: boolean;
+  /** False once the owner has answered or a newer message exists, so a card cannot be answered twice. */
+  actionable: boolean;
+  acceptLabel: string;
+  declineLabel: string;
+  onAccept: () => void;
+  onDecline: () => void;
+}
+
+/** Plans the assistant asks about (include them? remove them?) with the two answers as buttons. */
+function PlanConfirmation(props: PlanConfirmationProps) {
+  const { label, title, plans, removal = false, actionable, acceptLabel, declineLabel, onAccept, onDecline } = props;
+  return (
+    <div className="confirmation" role="group" aria-label={label}>
+      {title !== undefined ? <p className="confirmation__title">{title}</p> : null}
+      {plans.map((plan, index) => (
+        <PlanCard key={index} plan={plan} removal={removal} />
+      ))}
+      <div className="confirmation__actions">
+        <button
+          type="button"
+          className={`btn btn--small ${removal ? "btn--danger" : "btn--primary"}`}
+          onClick={onAccept}
+          disabled={!actionable}
+        >
+          <Icon name={removal ? "trash" : "check"} size={14} />
+          {acceptLabel}
+        </button>
+        <button type="button" className="btn btn--small" onClick={onDecline} disabled={!actionable}>
+          {declineLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface EntryProps {
   entry: ChatEntry;
   actionable: boolean;
-  onConfirm: () => void;
+  onSend: (message: string) => void;
   onCorrect: () => void;
 }
 
-function Entry({ entry, actionable, onConfirm, onCorrect }: EntryProps) {
+function Entry({ entry, actionable, onSend, onCorrect }: EntryProps) {
   if (entry.role === "system") {
     return (
       <li className="message message--system">
@@ -78,30 +127,45 @@ function Entry({ entry, actionable, onConfirm, onCorrect }: EntryProps) {
     );
   }
   const many = entry.pendingEvents.length > 1;
+  const manyRemovals = entry.pendingRemovals.length > 1;
   return (
     <li className="message message--assistant">
       <span className="visually-hidden">Assistant said: </span>
       <p className="message__text">{entry.text}</p>
       {entry.pendingEvents.length > 0 ? (
-        <div className="confirmation" role="group" aria-label="Plan awaiting your confirmation">
-          {entry.pendingEvents.map((draft, index) => (
-            <DraftCard key={index} draft={draft} />
-          ))}
-          <div className="confirmation__actions">
-            <button type="button" className="btn btn--primary btn--small" onClick={onConfirm} disabled={!actionable}>
-              <Icon name="check" size={14} />
-              {many ? "Yes, include them" : "Yes, include it"}
-            </button>
-            <button type="button" className="btn btn--small" onClick={onCorrect} disabled={!actionable}>
-              Correct it
-            </button>
-          </div>
-        </div>
+        <PlanConfirmation
+          label="Plan awaiting your confirmation"
+          plans={entry.pendingEvents}
+          actionable={actionable}
+          acceptLabel={many ? "Yes, include them" : "Yes, include it"}
+          declineLabel="Correct it"
+          onAccept={() => onSend(CONFIRM_MESSAGE)}
+          onDecline={onCorrect}
+        />
+      ) : null}
+      {entry.pendingRemovals.length > 0 ? (
+        <PlanConfirmation
+          label="Plan awaiting removal"
+          title={manyRemovals ? "Remove these plans?" : "Remove this plan?"}
+          plans={entry.pendingRemovals}
+          removal
+          actionable={actionable}
+          acceptLabel={manyRemovals ? "Yes, remove them" : "Yes, remove it"}
+          declineLabel={manyRemovals ? "Keep them" : "Keep it"}
+          onAccept={() => onSend(manyRemovals ? REMOVE_ALL_MESSAGE : REMOVE_MESSAGE)}
+          onDecline={() => onSend(manyRemovals ? KEEP_ALL_MESSAGE : KEEP_MESSAGE)}
+        />
       ) : null}
       {entry.savedEvents.map((event) => (
         <p key={event.id} className="message__saved">
           <Icon name="check" size={12} />
           Added to your plans: {event.description}
+        </p>
+      ))}
+      {entry.removedEvents.map((event) => (
+        <p key={event.id} className="message__saved">
+          <Icon name="trash" size={12} />
+          Removed from your plans: {event.description}
         </p>
       ))}
       <DataUsed toolCalls={entry.toolCalls} />
@@ -175,7 +239,7 @@ export function ChatPanel({ chat }: Props) {
             key={entry.id}
             entry={entry}
             actionable={entry.id === lastEntryId && !chat.sending}
-            onConfirm={() => sendPreset(CONFIRM_MESSAGE)}
+            onSend={sendPreset}
             onCorrect={startCorrection}
           />
         ))}

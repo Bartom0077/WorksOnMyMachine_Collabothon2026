@@ -73,6 +73,12 @@ def test_payload_passes_the_mcp_server_with_as_of_header_and_restricted_tools():
     }]
 
 
+def test_payload_names_the_plans_confirmed_for_removal_in_a_header():
+    access = McpAccess(MCP_URL, date(2025, 5, 10), ("remove_planned_event",), removable_event_ids=(7, 12))
+    (tool,) = build_payload("m", simple_request(mcp=access))["tools"]
+    assert tool["headers"] == {"X-As-Of-Date": "2025-05-10", "X-Removable-Event-Ids": "7,12"}
+
+
 def test_payload_requests_guided_json_when_a_schema_is_given():
     schema = {"type": "object", "properties": {"headline": {"type": "string"}}}
     payload = build_payload("m", simple_request(json_schema=JsonSchemaFormat("recommendation", schema)))

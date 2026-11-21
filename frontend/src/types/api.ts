@@ -199,6 +199,10 @@ export interface ChatResponse {
   reply: string;
   pending_events: EventDraft[];
   saved_events: PlannedEvent[];
+  /** Saved plans the assistant asks the owner to confirm for removal; nothing is removed yet. */
+  pending_removals: PlannedEvent[];
+  /** Plans removed in this turn. */
+  removed_events: PlannedEvent[];
   tool_calls: ToolCall[];
   events_changed: boolean;
 }

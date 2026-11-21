@@ -129,7 +129,7 @@ export const closureEvent: PlannedEvent = {
   created_at: "2025-05-10T09:15:00Z",
 };
 
-const ovenEvent: PlannedEvent = {
+export const ovenEvent: PlannedEvent = {
   id: 12,
   event_type: "expense",
   date_from: "2025-06-10",
@@ -414,6 +414,8 @@ export const chatProposal: ChatResponse = {
     },
   ],
   saved_events: [],
+  pending_removals: [],
+  removed_events: [],
   tool_calls: [{ name: "propose_planned_event", ok: true }],
   events_changed: false,
 };
@@ -423,9 +425,47 @@ export const chatSaved: ChatResponse = {
   reply: "Done. The closure is now part of your forecast, and it creates a shortfall in early July.",
   pending_events: [],
   saved_events: [closureEvent],
+  pending_removals: [],
+  removed_events: [],
   tool_calls: [
     { name: "save_planned_event", ok: true },
     { name: "get_cash_kpis", ok: true },
   ],
   events_changed: true,
+};
+
+export const chatRemovalProposal: ChatResponse = {
+  conversation_id: "conv-2",
+  reply: "I found this plan: New pizza oven, €8,000.00 on 10 June 2025. Shall I remove it from your plans?",
+  pending_events: [],
+  saved_events: [],
+  pending_removals: [ovenEvent],
+  removed_events: [],
+  tool_calls: [
+    { name: "list_planned_events", ok: true },
+    { name: "propose_planned_event_removal", ok: true },
+  ],
+  events_changed: false,
+};
+
+export const chatRemoved: ChatResponse = {
+  conversation_id: "conv-2",
+  reply: "Done. The oven purchase is no longer part of your forecast.",
+  pending_events: [],
+  saved_events: [],
+  pending_removals: [],
+  removed_events: [ovenEvent],
+  tool_calls: [{ name: "remove_planned_event", ok: true }],
+  events_changed: true,
+};
+
+export const chatRemovalKept: ChatResponse = {
+  conversation_id: "conv-2",
+  reply: "All right, the plan stays in your forecast.",
+  pending_events: [],
+  saved_events: [],
+  pending_removals: [],
+  removed_events: [],
+  tool_calls: [],
+  events_changed: false,
 };

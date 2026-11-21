@@ -11,6 +11,8 @@ export type ChatEntry =
       text: string;
       pendingEvents: EventDraft[];
       savedEvents: PlannedEvent[];
+      pendingRemovals: PlannedEvent[];
+      removedEvents: PlannedEvent[];
       toolCalls: ToolCall[];
     };
 
@@ -58,7 +60,7 @@ export function useChat(params: ScenarioParams, onEventsChanged: () => void): Ch
           message,
           conversation_id: conversationIdRef.current,
         });
-        // A plan saved by a reply to an abandoned conversation still changed the forecast.
+        // A plan saved or removed by a reply to an abandoned conversation still changed the forecast.
         if (generation !== generationRef.current) {
           if (response.events_changed) onEventsChanged();
           return;
@@ -69,6 +71,9 @@ export function useChat(params: ScenarioParams, onEventsChanged: () => void): Ch
           text: response.reply,
           pendingEvents: response.pending_events,
           savedEvents: response.saved_events,
+          // A backend from before chat removals does not send these two fields.
+          pendingRemovals: response.pending_removals ?? [],
+          removedEvents: response.removed_events ?? [],
           toolCalls: response.tool_calls,
         });
         if (response.events_changed) {

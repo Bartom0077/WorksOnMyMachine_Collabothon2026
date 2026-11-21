@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
-import { approvedDecision, chatProposal, greenDashboard } from "../fixtures/data";
+import { approvedDecision, chatProposal, chatRemovalProposal, chatRemoved, greenDashboard } from "../fixtures/data";
 import { mockApi } from "../fixtures/mockApi";
 
 const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
@@ -22,6 +22,20 @@ test.describe("accessibility", () => {
     await page.getByRole("button", { name: "We are closing for holidays from 1 to 21 June" }).click();
     await expect(page.getByRole("group", { name: "Plan awaiting your confirmation" })).toBeVisible();
     await page.getByRole("button", { name: "Why?" }).click();
+    await expectNoAxeViolations(page);
+  });
+
+  test("chat removal card and its outcome have no WCAG A/AA violations", async ({ page }) => {
+    await mockApi(page, { chatQueue: [chatRemovalProposal, chatRemoved] });
+    await page.goto("/");
+    await page.getByLabel("Message to the assistant").fill("Please remove the oven purchase");
+    await page.getByLabel("Message to the assistant").press("Enter");
+    const removal = page.getByRole("group", { name: "Plan awaiting removal" });
+    await expect(removal).toBeVisible();
+    await expectNoAxeViolations(page);
+
+    await removal.getByRole("button", { name: "Yes, remove it" }).click();
+    await expect(page.getByText("Removed from your plans: New pizza oven")).toBeVisible();
     await expectNoAxeViolations(page);
   });
 

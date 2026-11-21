@@ -7,7 +7,8 @@ A small-business owner has no time for finance. This application watches the ban
 Amalfi, forecasts the balance day by day, warns before the money runs out, computes rescue options with
 their cost, explains them in plain language, and carries out the option the owner approves (simulated).
 The owner can also tell the assistant about plans in a chat ("we close for holidays from 1 to 21 June") and
-immediately see what they do to the forecast.
+immediately see what they do to the forecast, and ask it to remove such a plan again ("remove the oven
+purchase").
 
 The full specification is [`ROZWIAZANIE.md`](ROZWIAZANIE.md) (Polish). Everything else in the repository
 is English.
@@ -18,7 +19,7 @@ is English.
 |---|---|---|
 | Balance, forecast, risk status, rescue options and their cost | **code** | deterministic Python (`backend/`), the same input always gives the same numbers |
 | Explaining the situation, recommending one of the computed options | **LLM** | receives the numbers as a JSON dossier; its answer is validated, with a deterministic fallback text if the model is unavailable or invalid |
-| Turning the owner's words into a planned event | **LLM** | through MCP tools that validate the event; the owner confirms before it is saved |
+| Turning the owner's words into a planned event, or finding the plan the owner wants removed | **LLM** | through MCP tools that validate the request; the owner confirms before anything is saved or removed |
 | Approving or rejecting an option | **owner** | explicit approval dialog; every decision is stored in an audit trail |
 | Execution (credit line request, postponed payments) | **simulated** | recorded as planned events and messages; no money is moved |
 
@@ -194,7 +195,7 @@ automation: OpenShift AI with the model `cfo-llm` served by vLLM and the OGX ope
 ```bash
 oc login ...
 bash db/setup.sh                 # project, PostgreSQL, schema, bank statement, reference data
-bash db/setup_mcp_user.sh        # database role of the MCP server (insert of chat events only) + its secret
+bash db/setup_mcp_user.sh        # database role of the MCP server (insert and delete of chat events only) + its secret
 oc apply -f deploy/ogx-base-config.yaml -f deploy/ogx.yaml        # OGX in front of vLLM
 oc apply -f deploy/mcp-server.yaml -f deploy/backend.yaml -f deploy/frontend.yaml
 oc apply -f deploy/ci-poller.yaml                                 # optional: rebuild on every change of main
@@ -251,7 +252,9 @@ All figures below are computed by the code from the 2025 bank statement, with th
 2. **The owner tells the assistant a plan.** In the chat: *"We are closing for holidays from 1 to 21 June."*
    The assistant repeats what it understood and asks for confirmation; after "yes" the plan appears under
    "My plans" and the forecast is recalculated: the lowest balance drops to **−€15,728.42 on 1 July**. Three
-   weeks without revenue, while salaries, rent and the transfers to Zurich continue.
+   weeks without revenue, while salaries, rent and the transfers to Zurich continue. (A plan from the chat
+   can be taken out the same way: *"Remove the oven purchase"* shows a "Remove this plan?" card, and nothing
+   is removed before "Yes, remove it".)
 3. **Options computed by code, explained by the model.** The agent shows the options with their new lowest
    balance and cost: A (credit line), B (postpone the transfer to Zurich), C (shorter closure) and
    E (postpone payments + a smaller credit line). The explanation card is marked "AI explanation" (or
@@ -271,8 +274,11 @@ All figures below are computed by the code from the 2025 bank statement, with th
 * The recommendation cache is in memory (per backend pod, lost on restart).
 * The interest rates used for option costs are illustrative assumptions, not bank quotes
   (`backend/config.py`).
-* The chat's "confirm before saving" rule is enforced by the system prompt and the two-step tool design
-  (propose, then save), not by a technical approval gate in OGX.
+* The chat's "confirm before saving or removing" rule is enforced by backend code (`backend/llm_chat.py`: the
+  writing tools are offered only for plans the owner was shown, saves are checked against the confirmed
+  proposal, removals are limited to the ids on the confirmation card), not by an approval gate in OGX. Whether
+  the owner's answer means "yes" is still judged by the model.
+* A plan removed through the chat is deleted for good; the only record is a log line of the MCP server.
 * The forecast uses averages of the last 28 days and the documented recurring payments; there is no
   seasonality or public-holiday model.
 * One bank account, EUR; the CHF transfers are converted with the rates in the payment references.

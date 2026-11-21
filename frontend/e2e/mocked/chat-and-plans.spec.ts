@@ -1,5 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { approvedDashboard, approvedDecision, chatProposal, chatSaved, closureEvent, greenDashboard, redDashboard } from "../fixtures/data";
+import {
+  approvedDashboard,
+  approvedDecision,
+  chatProposal,
+  chatRemovalKept,
+  chatRemovalProposal,
+  chatRemoved,
+  chatSaved,
+  closureEvent,
+  greenDashboard,
+  redDashboard,
+} from "../fixtures/data";
 import { apiError, mockApi } from "../fixtures/mockApi";
 
 test.describe("assistant chat", () => {
@@ -141,6 +152,117 @@ test.describe("assistant chat", () => {
     ]);
     // The retried message is not duplicated in the transcript.
     await expect(chat.getByText("You said: Why is my balance dropping?")).toHaveCount(1);
+  });
+
+  test("confirming a removal takes the plan out of “My plans” and reloads the forecast", async ({ page }) => {
+    const api = await mockApi(page, {
+      chatQueue: [chatRemovalProposal, chatRemoved],
+      afterChat: (response, state) => {
+        if (response.events_changed) state.dashboard = greenDashboard;
+      },
+    });
+    await page.goto("/");
+    const plans = page.getByRole("region", { name: "My plans" });
+    await expect(plans.getByRole("listitem")).toHaveCount(2);
+    await expect(page.getByText("Status: Shortfall ahead")).toBeVisible();
+
+    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const input = page.getByLabel("Message to the assistant");
+    await input.fill("Please remove the oven purchase");
+    await input.press("Enter");
+
+    const removal = chat.getByRole("group", { name: "Plan awaiting removal" });
+    await expect(removal).toContainText("Remove this plan?");
+    await expect(removal).toContainText("Planned expense");
+    await expect(removal).toContainText("10 Jun 2025");
+    await expect(removal).toContainText("€8,000.00");
+    await expect(removal).toContainText("New pizza oven");
+    // Nothing is removed before the owner confirms.
+    await expect(plans.getByRole("listitem")).toHaveCount(2);
+    const dashboardCalls = api.requests.dashboard.length;
+    const recommendationCalls = api.requests.recommendation;
+
+    // Keyboard operable: the answer can be given without a pointer.
+    await removal.getByRole("button", { name: "Yes, remove it" }).focus();
+    await page.keyboard.press("Enter");
+
+    await expect(chat.getByText("Removed from your plans: New pizza oven")).toBeVisible();
+    await expect(chat.getByText("Forecast updated with your plans.")).toBeVisible();
+    await expect(plans.getByRole("listitem")).toHaveCount(1);
+    await expect(plans.getByText("New pizza oven")).toHaveCount(0);
+    await expect(page.getByText("No action needed")).toBeVisible();
+    await expect.poll(() => api.requests.dashboard.length).toBeGreaterThan(dashboardCalls);
+    await expect.poll(() => api.requests.recommendation).toBeGreaterThan(recommendationCalls);
+
+    expect(api.requests.chat).toHaveLength(2);
+    expect(api.requests.chat[1]).toMatchObject({
+      message: "Yes, please remove it from my plans.",
+      conversation_id: "conv-2",
+    });
+    // The plan was removed by the assistant, not through the "My plans" endpoint.
+    expect(api.requests.deletedEventIds).toEqual([]);
+    // Buttons of an answered removal card are no longer actionable.
+    await expect(removal.getByRole("button", { name: "Yes, remove it" })).toBeDisabled();
+    await expect(removal.getByRole("button", { name: "Keep it" })).toBeDisabled();
+  });
+
+  test("“Keep it” removes nothing", async ({ page }) => {
+    const api = await mockApi(page, { chatQueue: [chatRemovalProposal, chatRemovalKept] });
+    await page.goto("/");
+    const plans = page.getByRole("region", { name: "My plans" });
+    await expect(plans.getByRole("listitem")).toHaveCount(2);
+
+    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const input = page.getByLabel("Message to the assistant");
+    await input.fill("Please remove the oven purchase");
+    await input.press("Enter");
+    const removal = chat.getByRole("group", { name: "Plan awaiting removal" });
+    await expect(removal).toBeVisible();
+    const dashboardCalls = api.requests.dashboard.length;
+
+    await removal.getByRole("button", { name: "Keep it" }).click();
+
+    await expect(chat.getByText("All right, the plan stays in your forecast.")).toBeVisible();
+    expect(api.requests.chat[1]).toMatchObject({ message: "No, keep it.", conversation_id: "conv-2" });
+    await expect(plans.getByRole("listitem")).toHaveCount(2);
+    await expect(plans.getByText("New pizza oven")).toBeVisible();
+    await expect(chat.getByText(/Removed from your plans/)).toHaveCount(0);
+    await expect(chat.getByText("Forecast updated with your plans.")).toHaveCount(0);
+    expect(api.requests.dashboard.length).toBe(dashboardCalls);
+    await expect(removal.getByRole("button", { name: "Keep it" })).toBeDisabled();
+  });
+
+  test("a removal card whose plan was already removed by hand does no harm", async ({ page }) => {
+    const stale = {
+      ...chatRemovalKept,
+      reply: "I could not find that plan. Your current plans: Holiday closure.",
+      tool_calls: [{ name: "list_planned_events", ok: true }],
+    };
+    const api = await mockApi(page, { chatQueue: [chatRemovalProposal, stale] });
+    await page.goto("/");
+    const plans = page.getByRole("region", { name: "My plans" });
+    const chat = page.getByRole("complementary", { name: "Assistant" });
+    const input = page.getByLabel("Message to the assistant");
+    await input.fill("Please remove the oven purchase");
+    await input.press("Enter");
+    const removal = chat.getByRole("group", { name: "Plan awaiting removal" });
+    await expect(removal).toBeVisible();
+
+    // The owner removes the plan in "My plans" while the card is still open.
+    await plans.getByRole("button", { name: "Remove plan: New pizza oven" }).click();
+    await expect(plans.getByRole("listitem")).toHaveCount(1);
+
+    await removal.getByRole("button", { name: "Yes, remove it" }).click();
+    await expect(chat.getByText("I could not find that plan. Your current plans: Holiday closure.")).toBeVisible();
+    await expect(plans.getByRole("listitem")).toHaveCount(1);
+    await expect(chat.getByRole("alert")).toHaveCount(0);
+    expect(api.requests.deletedEventIds).toEqual([12]);
+
+    // Reset demo starts a new conversation: the old card is gone with the transcript.
+    await page.getByRole("button", { name: "Reset demo" }).click();
+    await page.getByRole("dialog", { name: "Reset the demo?" }).getByRole("button", { name: "Delete plans and decisions" }).click();
+    await expect(chat.getByText("Demo reset: all plans and decisions were deleted.")).toBeVisible();
+    await expect(removal).toHaveCount(0);
   });
 });
 

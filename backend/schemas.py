@@ -257,6 +257,9 @@ class ChatResponse(_Response):
     reply: str
     pending_events: list[ChatEventDraftOut]
     saved_events: list[EventOut]
+    # Saved plans the assistant asks the owner to confirm for removal, and the plans removed in this turn.
+    pending_removals: list[EventOut]
+    removed_events: list[EventOut]
     tool_calls: list[ToolCallOut]
     events_changed: bool
 

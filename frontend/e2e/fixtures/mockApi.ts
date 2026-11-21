@@ -129,7 +129,12 @@ export async function mockApi(page: Page, overrides: Partial<MockState> = {}): P
         const response =
           state.chatQueue.shift() ?? apiError(503, "assistant_unavailable", "The assistant is not reachable.");
         await delay(state.chatDelayMs);
-        if (!isMockError(response)) state.afterChat(response, state);
+        if (!isMockError(response)) {
+          // Like the backend: a plan removed through the chat is gone from the stored plans.
+          const removedIds = new Set(response.removed_events.map((event) => event.id));
+          state.events = state.events.filter((event) => !removedIds.has(event.id));
+          state.afterChat(response, state);
+        }
         return fulfill(route, response);
       }
       case "POST /demo/reset":

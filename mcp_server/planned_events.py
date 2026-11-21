@@ -1,10 +1,13 @@
-"""Planned events from the owner's chat: validation, the single write of this server, and listing.
+"""Planned events from the owner's chat: validation, the two writes of this server (insert, delete), listing.
 
 A planned event is a future fact the owner told the assistant about (a closure, a one-off expense or a
 one-off inflow). The forecast engine in the backend applies it; nothing here computes balances.
 
 Flow: ``propose_planned_event`` validates only, the owner confirms in the chat, then ``save_planned_event``
 validates again and inserts one row into ``planned_events`` (source ``chat``).
+
+Removing follows the same scheme: ``propose_planned_event_removal`` only looks the plan up, the owner confirms,
+then ``remove_planned_event`` deletes that one chat row, and only if the orchestrator listed its id as confirmed.
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import Enum
-from typing import Optional, Union
+from typing import Collection, Optional, Union
 
 import psycopg
 
@@ -32,6 +35,17 @@ CLOSURE_ENDS_TODAY = ("A closure that ends today ({today}) changes nothing: the 
                       "Set date_to to tomorrow or later.")
 PAYMENT_DATED_TODAY = ("Today's ({today}) payments are already in the bank balance and the forecast starts "
                        "tomorrow. Put tomorrow or a later date in date_from; ask the owner if unsure.")
+
+AGENT_EVENT_NOT_REMOVABLE = ("Planned event {id} ({description}) belongs to a rescue option the owner approved, so it "
+                             "cannot be removed in the chat. Tell the owner to withdraw it with the \"Withdraw option\" "
+                             "button next to it in the \"My plans\" list.")
+UNKNOWN_EVENT = ("There is no planned event with id {id}. Call list_planned_events and use the id of the plan the "
+                 "owner means; if no plan matches, tell the owner so and name the plans that exist.")
+ALREADY_REMOVED = ("Planned event {id} is already gone from the plans; nothing was left to remove. Tell the owner "
+                   "that it is no longer in the plans.")
+REMOVAL_NOT_CONFIRMED = ("Planned event {id} was not removed: the owner has not confirmed its removal yet. Call "
+                         "propose_planned_event_removal with this id, ask the owner to confirm, and remove it only "
+                         "after the owner said yes.")
 
 EVENT_COLUMNS = ("id, event_type, date_from, date_to, amount_eur, category, description, original_utterance, "
                  "source, as_of_date, decision_id, created_at")
@@ -147,15 +161,24 @@ def validate_event(as_of: date, event_type: str, date_from: Optional[str], date_
     )
 
 
+def _in_words(event_type: str, date_from: date, date_to: date, amount_eur: Union[Decimal, float, None]) -> str:
+    if event_type == EventType.CLOSURE.value:
+        days = (date_to - date_from).days + 1
+        return f"closure from {date_from.isoformat()} to {date_to.isoformat()} ({days} day{'s' if days != 1 else ''})"
+    return f"{event_type} of EUR {amount_eur:,.2f} on {date_from.isoformat()}"
+
+
 def confirmation_prompt(event: PlannedEvent) -> str:
     """The question to put to the owner before saving."""
-    if event.event_type is EventType.CLOSURE:
-        days = (event.date_to - event.date_from).days + 1
-        what = (f"closure from {event.date_from.isoformat()} to {event.date_to.isoformat()} "
-                f"({days} day{'s' if days != 1 else ''})")
-    else:
-        what = f"{event.event_type.value} of EUR {event.amount_eur:,.2f} on {event.date_from.isoformat()}"
+    what = _in_words(event.event_type.value, event.date_from, event.date_to, event.amount_eur)
     return f"I understood: {what} - {event.description}. Should I include it in the forecast?"
+
+
+def removal_confirmation_prompt(row: dict) -> str:
+    """The question to put to the owner before removing a saved plan (``row`` as returned by ``fetch_dicts``)."""
+    what = _in_words(row["event_type"], date.fromisoformat(row["date_from"]), date.fromisoformat(row["date_to"]),
+                     row["amount_eur"])
+    return f"You want to remove this plan: {what} - {row['description']}. Should I remove it from your plans?"
 
 
 # --------------------------------------------------------------------------- tools
@@ -198,6 +221,53 @@ def save_planned_event(conn: psycopg.Connection, as_of: date, event_type: str, d
                        (event.event_type.value, event.date_from, event.date_to, event.amount_eur, event.description,
                         utterance, CHAT_SOURCE, as_of))
     return {"saved": True, "event": rows[0]}
+
+
+def _event_id(value: Union[int, str, None]) -> int:
+    try:
+        return int(str(value).strip())
+    except ValueError as exc:
+        raise ToolInputError(f"event_id must be the numeric id of a plan from list_planned_events, got {value!r}.") from exc
+
+
+def _stored_event(conn: psycopg.Connection, event_id: int) -> Optional[dict]:
+    """The saved plan with this id, if it is a chat plan; a measure of an approved option is refused."""
+    rows = fetch_dicts(conn, f"SELECT {EVENT_COLUMNS} FROM planned_events WHERE id = %s", (event_id,))
+    if rows and rows[0]["source"] != CHAT_SOURCE:
+        raise ToolInputError(AGENT_EVENT_NOT_REMOVABLE.format(id=event_id, description=rows[0]["description"]))
+    return rows[0] if rows else None
+
+
+def propose_planned_event_removal(conn: psycopg.Connection, event_id: Union[int, str, None]) -> dict:
+    """Look up the plan the owner wants to remove. Nothing is written."""
+    wanted = _event_id(event_id)
+    event = _stored_event(conn, wanted)
+    if event is None:
+        raise ToolInputError(UNKNOWN_EVENT.format(id=wanted))
+    return {"valid": True, "event": event, "confirmation_prompt": removal_confirmation_prompt(event)}
+
+
+def remove_planned_event(conn: psycopg.Connection, event_id: Union[int, str, None],
+                         confirmed_ids: Collection[int]) -> dict:
+    """Delete one chat plan. ``conn`` must be the read-write connection (db.connect_write).
+
+    ``confirmed_ids`` are the plans the owner was shown for removal (set by the orchestrator, not by the model);
+    any other id is refused before the database is touched. A confirmed plan that no longer exists (the request
+    was repeated, or the owner removed it in the app meanwhile) is reported as ``already_removed``, not as an
+    error: what the owner confirmed is true.
+    """
+    wanted = _event_id(event_id)
+    if wanted not in confirmed_ids:
+        raise ToolInputError(REMOVAL_NOT_CONFIRMED.format(id=wanted))
+    already_removed = {"removed": False, "already_removed": True, "event_id": wanted,
+                       "note": ALREADY_REMOVED.format(id=wanted)}
+    if _stored_event(conn, wanted) is None:
+        return already_removed
+    rows = fetch_dicts(conn, f"DELETE FROM planned_events WHERE id = %s AND source = %s RETURNING {EVENT_COLUMNS}",
+                       (wanted, CHAT_SOURCE))
+    if not rows:  # removed by someone else between the statements
+        return already_removed
+    return {"removed": True, "event": rows[0]}
 
 
 def list_planned_events(conn: psycopg.Connection, cutoff: Optional[date]) -> dict:

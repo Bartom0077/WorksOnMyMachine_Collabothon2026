@@ -5,7 +5,7 @@ Connection settings: ``DATABASE_URL``, else the standard libpq environment varia
 
 Every session is read-only by default (``default_transaction_read_only``) and gets a statement
 timeout, independently of the database role's privileges. ``connect_write`` is the single exception:
-it opens one explicit READ WRITE transaction and is used only to insert a confirmed planned event.
+it opens one explicit READ WRITE transaction and is used only to insert or delete a confirmed planned event.
 """
 from __future__ import annotations
 
@@ -33,11 +33,11 @@ def connect() -> psycopg.Connection:
 
 
 def connect_write() -> psycopg.Connection:
-    """Connection whose single transaction is READ WRITE; for save_planned_event only.
+    """Connection whose single transaction is READ WRITE; for save_planned_event and remove_planned_event only.
 
     The session default stays read-only: psycopg opens the transaction with ``BEGIN READ WRITE`` and
     ``with connect_write() as conn`` commits on success and rolls back on any error. What can be written
-    is limited by the role's grants (INSERT on planned_events only).
+    is limited by the role's grants (INSERT and DELETE of chat rows in planned_events only).
     """
     conn = psycopg.connect(os.environ.get("DATABASE_URL", ""), connect_timeout=10, autocommit=False,
                            options=SESSION_OPTIONS)
