@@ -42,6 +42,7 @@ metadata:
 data:
   frontend-sha: none
   backend-sha: none
+  mcp-sha: none
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -113,6 +114,7 @@ data:
     fail=0
     build_if_changed frontend-sha frontend autonomous-cfo || fail=1
     build_if_changed backend-sha backend autonomous-cfo-backend || fail=1
+    build_if_changed mcp-sha mcp_server amalfi-mcp || fail=1
     exit "$fail"
 ---
 apiVersion: batch/v1
