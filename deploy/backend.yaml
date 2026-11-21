@@ -85,6 +85,9 @@ spec:
               value: vllm-cfo/cfo-llm
             - name: MCP_SERVER_URL
               value: http://amalfi-mcp.autonomous-cfo.svc.cluster.local:8080/mcp
+            # NeMo Guardrails (TrustyAI) in front of the shared model. Checks the text; OGX still runs the tools.
+            - name: NEMO_GUARDRAILS_URL
+              value: http://cfo-nemo.cfo-models.svc.cluster.local
           ports:
             - name: http
               containerPort: 8080

@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cfo-nemo-config
+  namespace: cfo-models
+data:
+  config.yaml: |
+    models:
+      - type: main
+        engine: openai
+        model: cfo-llm
+        parameters:
+          base_url: https://cfo-llm-kserve-workload-svc.cfo-models.svc.cluster.local:8000/v1
+          api_key: local
+          verify_ssl: false
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+              - PERSON
+          output:
+            entities:
+              - PERSON
+      input:
+        flows:
+          - detect sensitive data on input
+      output:
+        flows:
+          - detect sensitive data on output
+  rails.co: |
+    # Built-in sensitive-data rails. No custom Colang flows.
+---
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: NemoGuardrails
+metadata:
+  name: cfo-nemo
+  namespace: cfo-models
+  annotations:
+    security.opendatahub.io/enable-auth: "false"
+spec:
+  nemoConfigs:
+    - name: cfo-nemo-config
+      configMaps:
+        - cfo-nemo-config

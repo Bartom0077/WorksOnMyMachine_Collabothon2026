@@ -4,13 +4,17 @@ The backend talks to OGX's OpenAI-compatible Responses API and never to vLLM dir
 data through the MCP server passed as a tool (fixed queries, no SQL); the ``X-As-Of-Date`` header pins the
 simulated "today" so the model cannot see data from the future. Conversation history is stored by OGX and
 continued with ``previous_response_id``.
+
+When a NeMo Guardrails URL is configured, the owner's text is checked before OGX is called and the model's
+reply is checked afterwards (``/v1/guardrail/checks``). NeMo is not a stand-in for OGX: tool calls, the JSON
+schema and the conversation id stay on the Responses API.
 """
 from __future__ import annotations
 
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any, Callable, Mapping, Optional, Protocol
 from urllib.parse import quote
@@ -59,6 +63,16 @@ class LlmProtocolError(LlmError):
     """OGX answered with a body that is not a Responses API document."""
 
     reason = "llm_invalid_response"
+
+
+class LlmGuardrailBlockedError(LlmError):
+    """NeMo Guardrails refused the text (an email address or a person's name)."""
+
+    reason = "llm_guardrail_blocked"
+
+
+# Shown instead of a blocked reply. The blocked text itself is never logged or returned.
+GUARDRAIL_REPLY = ("I can't pass that on. It contains sensitive data, such as an email address or a person's name.")
 
 
 @dataclass(frozen=True)
@@ -148,16 +162,59 @@ class LlmClient(Protocol):
     def get_response(self, response_id: str, timeout_seconds: Optional[float] = None) -> LlmResponse: ...
 
 
+class Guardrails:
+    """Screens one text at a time on NeMo's ``/v1/guardrail/checks``. A user message runs the input rails and an
+    assistant message runs the output rails. Anything other than ``status: success`` is a block."""
+
+    def __init__(self, http: httpx.Client):
+        self._http = http
+
+    def screen(self, role: str, content: str) -> None:
+        if not content.strip():
+            return
+        try:
+            response = self._http.post("/v1/guardrail/checks", json={
+                "model": "cfo-llm",
+                "messages": [{"role": role, "content": content}],
+            })
+        except httpx.TimeoutException as exc:
+            raise LlmTimeoutError(f"NeMo Guardrails did not answer in time: {exc!r}") from exc
+        except httpx.TransportError as exc:
+            raise LlmUnreachableError(f"NeMo Guardrails is unreachable: {exc!r}") from exc
+        if response.status_code >= 400:
+            raise LlmHttpError(f"NeMo Guardrails answered HTTP {response.status_code}: "
+                               f"{response.text[:_ERROR_DETAIL_LOG_CHARS]}")
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise LlmProtocolError("NeMo Guardrails returned a body that is not JSON.") from exc
+        if not isinstance(body, dict) or body.get("status") != "success":
+            logger.info("NeMo Guardrails blocked a %s message.", role)
+            raise LlmGuardrailBlockedError("NeMo Guardrails blocked this text.")
+
+
 class OgxClient:
     """Synchronous Responses API client (the endpoints are sync and run in FastAPI's threadpool)."""
 
-    def __init__(self, http: httpx.Client, model: str):
+    def __init__(self, http: httpx.Client, model: str, guardrails: Optional[Guardrails] = None):
         self._http = http
         self._model = model
+        self._guardrails = guardrails
 
     def respond(self, request: LlmRequest, timeout_seconds: Optional[float] = None) -> LlmResponse:
+        self._screen("user", request.input)
         payload = build_payload(self._model, request)
-        return parse_response(self._send("POST", "/v1/responses", payload, timeout_seconds))
+        parsed = parse_response(self._send("POST", "/v1/responses", payload, timeout_seconds))
+        try:
+            self._screen("assistant", parsed.text)
+        except LlmGuardrailBlockedError:
+            # The model may already have called a tool. Keep that record and replace only the text the owner sees.
+            return replace(parsed, text=GUARDRAIL_REPLY)
+        return parsed
+
+    def _screen(self, role: str, content: str) -> None:
+        if self._guardrails is not None:
+            self._guardrails.screen(role, content)
 
     def get_response(self, response_id: str, timeout_seconds: Optional[float] = None) -> LlmResponse:
         # The id comes from the browser: quoted, so it can never address another OGX path or add a query string.

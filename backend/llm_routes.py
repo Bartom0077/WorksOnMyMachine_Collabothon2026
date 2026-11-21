@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 import service
 from config import LLM_CONNECT_TIMEOUT_SECONDS, LLM_TIMEOUT_SECONDS, Settings
 from deps import get_repository, get_settings
-from llm import LlmClient, OgxClient, create_http_client
+from llm import Guardrails, LlmClient, OgxClient, create_http_client
 from llm_chat import ChatService, PendingPlansStore
 from llm_recommendation import RecommendationCache, RecommendationService
 from repository import Repository
@@ -25,7 +25,11 @@ def get_llm_client() -> LlmClient:
     """One shared OGX client (httpx keeps a thread-safe connection pool) for the life of the process."""
     settings = get_settings()
     http = create_http_client(settings.ogx_url, LLM_TIMEOUT_SECONDS, LLM_CONNECT_TIMEOUT_SECONDS)
-    return OgxClient(http, settings.ogx_model)
+    guardrails = None
+    if settings.nemo_guardrails_url:
+        guardrails = Guardrails(create_http_client(
+            settings.nemo_guardrails_url, LLM_TIMEOUT_SECONDS, LLM_CONNECT_TIMEOUT_SECONDS))
+    return OgxClient(http, settings.ogx_model, guardrails)
 
 
 @lru_cache(maxsize=1)
