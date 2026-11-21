@@ -214,6 +214,7 @@ class DecisionOut(_Response):
     llm_explanation: Optional[str]
     execution_messages: list[str]
     decided_at: datetime
+    withdrawn_at: Optional[datetime]
     snapshot: DecisionSnapshotOut
 
 

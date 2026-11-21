@@ -147,6 +147,9 @@ export async function mockApi(page: Page, overrides: Partial<MockState> = {}): P
           state.events = state.events.filter(
             (event) => event.id !== id && (decisionId === null || event.decision_id !== decisionId),
           );
+          state.decisions = state.decisions.map((decision) =>
+            decision.id === decisionId ? { ...decision, withdrawn_at: "2025-05-10T10:00:00Z" } : decision,
+          );
           return route.fulfill({ status: 204 });
         }
         return fulfill(route, apiError(404, "not_found", `No mock for ${endpoint}`));

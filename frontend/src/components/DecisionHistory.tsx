@@ -9,9 +9,31 @@ interface Props {
   decisions: AsyncResource<DecisionsResponse>;
 }
 
+type DecisionOutcome = "approved" | "rejected" | "withdrawn";
+
+const OUTCOME_LABEL: Record<DecisionOutcome, string> = {
+  approved: "Approved",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
+};
+
+function decisionOutcome(decision: Decision): DecisionOutcome {
+  return decision.withdrawn_at !== null ? "withdrawn" : decision.status;
+}
+
+function ExecutionCell({ decision, outcome }: { decision: Decision; outcome: DecisionOutcome }) {
+  if (outcome === "rejected") return <span className="muted">Not executed</span>;
+  return (
+    <>
+      <span className="badge badge--simulated">{decision.execution}</span>
+      {outcome === "withdrawn" ? <p className="muted">Reversed: no longer in the forecast</p> : null}
+    </>
+  );
+}
+
 function DecisionRow({ decision }: { decision: Decision }) {
   const { snapshot } = decision;
-  const approved = decision.status === "approved";
+  const outcome = decisionOutcome(decision);
   const creditNote = creditLineNote(snapshot.credit_limit_after_eur, snapshot.min_balance_after_eur);
   return (
     <tr>
@@ -21,17 +43,16 @@ function DecisionRow({ decision }: { decision: Decision }) {
         {decision.option_id}: {decision.option_title}
       </th>
       <td>
-        <span className={`badge badge--${decision.status}`}>
-          <Icon name={approved ? "check" : "close"} size={14} />
-          {approved ? "Approved" : "Rejected"}
+        <span className={`badge badge--${outcome}`}>
+          <Icon name={outcome === "approved" ? "check" : "close"} size={14} />
+          {OUTCOME_LABEL[outcome]}
         </span>
+        {decision.withdrawn_at !== null ? (
+          <p className="muted">Approved, then withdrawn on {formatDateTime(decision.withdrawn_at)}</p>
+        ) : null}
       </td>
       <td>
-        {approved ? (
-          <span className="badge badge--simulated">{decision.execution}</span>
-        ) : (
-          <span className="muted">Not executed</span>
-        )}
+        <ExecutionCell decision={decision} outcome={outcome} />
       </td>
       <td>
         <div className="before-after">
@@ -50,7 +71,7 @@ function DecisionRow({ decision }: { decision: Decision }) {
   );
 }
 
-/** Audit trail of approved and rejected options. */
+/** Audit trail of approved, rejected and later withdrawn options. */
 export function DecisionHistory({ decisions }: Props) {
   const list = decisions.data?.decisions ?? null;
 

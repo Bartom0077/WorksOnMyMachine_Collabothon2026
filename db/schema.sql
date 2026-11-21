@@ -103,8 +103,10 @@ CREATE TABLE IF NOT EXISTS owner_decisions (
     llm_explanation TEXT,
     execution_messages JSONB NOT NULL DEFAULT '[]'::jsonb,
     forecast_snapshot JSONB NOT NULL,             -- risk + forecast at the moment of the decision
-    decided_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    withdrawn_at TIMESTAMPTZ                      -- set when the owner later withdrew an approved option
 );
+ALTER TABLE owner_decisions ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ;
 
 -- Future plans: described by the owner in chat (source 'chat') or created from an approved option ('agent').
 -- Chat events are written by the MCP server, so the database itself limits them to what the owner may plan

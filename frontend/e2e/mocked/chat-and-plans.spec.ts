@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { approvedDashboard, chatProposal, chatSaved, closureEvent, greenDashboard, redDashboard } from "../fixtures/data";
+import { approvedDashboard, approvedDecision, chatProposal, chatSaved, closureEvent, greenDashboard, redDashboard } from "../fixtures/data";
 import { apiError, mockApi } from "../fixtures/mockApi";
 
 test.describe("assistant chat", () => {
@@ -189,8 +189,15 @@ test.describe("my plans", () => {
   });
 
   test("removing a measure from an approved option asks for confirmation first", async ({ page }) => {
-    const api = await mockApi(page, { dashboard: approvedDashboard, events: approvedDashboard.events });
+    const api = await mockApi(page, {
+      dashboard: approvedDashboard,
+      events: approvedDashboard.events,
+      decisions: [approvedDecision],
+    });
     await page.goto("/");
+    const decisionRow = page.getByRole("row", { name: /E: Postpone transfers/ });
+    await expect(decisionRow).toContainText("Approved");
+    await expect(decisionRow).not.toContainText("Withdrawn");
 
     await page.getByRole("button", { name: "Withdraw option: Credit line of €15,000" }).click();
     const dialog = page.getByRole("dialog", { name: "Withdraw this approved option?" });
@@ -209,6 +216,9 @@ test.describe("my plans", () => {
     expect(api.requests.deletedEventIds).toEqual([22]);
     const plans = page.getByRole("region", { name: "My plans" });
     await expect(plans.getByText("From an approved option")).toHaveCount(0);
+    await expect(decisionRow).toContainText("Withdrawn");
+    await expect(decisionRow).toContainText("Approved, then withdrawn on");
+    await expect(decisionRow).toContainText("Reversed: no longer in the forecast");
   });
 
   test("shows an error when a plan cannot be removed", async ({ page }) => {

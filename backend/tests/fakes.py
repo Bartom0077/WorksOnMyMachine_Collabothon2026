@@ -68,8 +68,9 @@ class InMemoryRepository:
 
     def withdraw_decision(self, decision_id: int, note: str) -> None:
         self.events = [event for event in self.events if event.decision_id != decision_id]
-        self.decisions = [replace(decision, execution_messages=(*decision.execution_messages, note))
-                          if decision.id == decision_id else decision for decision in self.decisions]
+        self.decisions = [
+            replace(decision, execution_messages=(*decision.execution_messages, note), withdrawn_at=FIXED_NOW)
+            if decision.id == decision_id else decision for decision in self.decisions]
 
     def record_decision(self, decision: NewDecision, events_to_add: Sequence[EventDraft],
                         event_updates: Sequence[EventUpdate]) -> DecisionRecord:

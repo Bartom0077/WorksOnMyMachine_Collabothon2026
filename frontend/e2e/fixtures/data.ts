@@ -379,6 +379,7 @@ export const approvedDecision: Decision = {
     "Transfers to Zurich on 15 May and 15 June postponed by two months (simulated).",
   ],
   decided_at: "2025-05-10T09:30:00Z",
+  withdrawn_at: null,
   snapshot: {
     status_before: "RED",
     min_balance_before_eur: MIN_BALANCE,

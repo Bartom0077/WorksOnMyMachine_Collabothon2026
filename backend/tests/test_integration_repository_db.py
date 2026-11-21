@@ -147,6 +147,7 @@ def test_removing_an_event_of_an_approved_option_withdraws_the_whole_option(clie
     assert [event.id for event in repository.list_events()] == [closure_id]
     [logged] = client.get("/decisions").json()["decisions"]
     assert logged["id"] == decision["id"] and logged["execution_messages"][-1].startswith("Withdrawn by the owner")
+    assert decision["withdrawn_at"] is None and logged["withdrawn_at"] is not None
     assert client.get("/dashboard", params=PARAMS).json()["risk"]["status"] == "RED"
 
 

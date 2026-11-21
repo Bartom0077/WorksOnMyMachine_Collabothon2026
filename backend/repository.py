@@ -60,7 +60,8 @@ class Repository(Protocol):
         ...
 
     def withdraw_decision(self, decision_id: int, note: str) -> None:
-        """Remove every planned event an approved decision created and add ``note`` to its audit messages."""
+        """Remove every planned event an approved decision created, mark the decision as withdrawn and add
+        ``note`` to its audit messages."""
         ...
 
     def record_decision(self, decision: NewDecision, events_to_add: Sequence[EventDraft],
@@ -72,7 +73,8 @@ class Repository(Protocol):
 _EVENT_COLUMNS = ("id, event_type, date_from, date_to, amount_eur, category, description, original_utterance, "
                   "source, as_of_date, decision_id, created_at")
 _DECISION_COLUMNS = ("id, as_of_date, horizon_days, buffer_eur, option_id, option_title, option_description, "
-                     "status, execution, llm_explanation, execution_messages, forecast_snapshot, decided_at")
+                     "status, execution, llm_explanation, execution_messages, forecast_snapshot, decided_at, "
+                     "withdrawn_at")
 FINGERPRINT_KEY = "option_fingerprint"  # key inside the ``forecast_snapshot`` document
 _DECISION_LOCK_KEY = 2026_0001  # pg_advisory_xact_lock key shared by all backend instances
 
@@ -145,8 +147,8 @@ class PostgresRepository:
     def withdraw_decision(self, decision_id: int, note: str) -> None:
         with self._connection.transaction(), self._connection.cursor() as cur:
             cur.execute("DELETE FROM planned_events WHERE decision_id = %s", (decision_id,))
-            cur.execute("UPDATE owner_decisions SET execution_messages = execution_messages || %s WHERE id = %s",
-                        (Jsonb([note]), decision_id))
+            cur.execute("UPDATE owner_decisions SET execution_messages = execution_messages || %s, withdrawn_at = now() "
+                        "WHERE id = %s", (Jsonb([note]), decision_id))
 
     def record_decision(self, decision: NewDecision, events_to_add: Sequence[EventDraft],
                         event_updates: Sequence[EventUpdate]) -> DecisionRecord:
@@ -237,6 +239,7 @@ def _decision_from_row(row: dict) -> DecisionRecord:
         execution_messages=tuple(row["execution_messages"]),
         decided_at=row["decided_at"],
         snapshot=snapshot_from_json(row["forecast_snapshot"]),
+        withdrawn_at=row["withdrawn_at"],
     )
 
 

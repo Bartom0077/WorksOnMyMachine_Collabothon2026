@@ -226,6 +226,8 @@ def test_removing_one_event_of_an_approved_option_withdraws_the_whole_option(rep
     assert [event.id for event in repo.events] == [plan.id]  # the postponed payments went with the credit line
     [record] = repo.list_decisions()
     assert record.id == decision.id and record.execution_messages[-1] == service.DECISION_WITHDRAWN_NOTE
+    assert decision.withdrawn_at is None and record.withdrawn_at is not None
+    assert record.status is DecisionStatus.APPROVED  # the audit trail keeps what was decided
     assert service.build_dashboard(repo, QUERY).risk.min_balance_eur == Decimal("-15728.42")
 
 

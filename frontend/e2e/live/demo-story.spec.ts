@@ -250,7 +250,9 @@ test.describe("demo story on the deployed application", () => {
 
     await expect(dialog).toBeHidden();
     await expect(plans().getByText(/No plans yet/)).toBeVisible();
-    await expect(page.getByRole("row", { name: new RegExp(`${recommendedOptionId}: `) })).toContainText("Approved");
+    const decisionRow = page.getByRole("row", { name: new RegExp(`${recommendedOptionId}: `) });
+    await expect(decisionRow).toContainText("Withdrawn");
+    await expect(decisionRow).toContainText("Reversed: no longer in the forecast");
     await capture("10-option-withdrawn-desktop");
   });
 });

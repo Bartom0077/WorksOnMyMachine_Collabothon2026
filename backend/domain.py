@@ -290,6 +290,7 @@ class DecisionRecord:
     execution_messages: tuple[str, ...]
     decided_at: datetime
     snapshot: DecisionSnapshot
+    withdrawn_at: Optional[datetime] = None  # set when the owner later withdrew an approved option
 
 
 @dataclass(frozen=True)
