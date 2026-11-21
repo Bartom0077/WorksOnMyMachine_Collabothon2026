@@ -1,10 +1,11 @@
-"""Read-only PostgreSQL access and the as-of cutoff for the Amalfi MCP server.
+"""PostgreSQL access and the as-of cutoff for the Amalfi MCP server.
 
 Connection settings: ``DATABASE_URL``, else the standard libpq environment variables
 (``PGHOST``, ``PGPORT``, ``PGDATABASE``, ``PGUSER``, ``PGPASSWORD``).
 
-Every session is forced read-only (``default_transaction_read_only``) and gets a statement
-timeout, independently of the database role's privileges.
+Every session is read-only by default (``default_transaction_read_only``) and gets a statement
+timeout, independently of the database role's privileges. ``connect_write`` is the single exception:
+it opens one explicit READ WRITE transaction and is used only to insert a confirmed planned event.
 """
 from __future__ import annotations
 
@@ -22,13 +23,26 @@ class ToolInputError(ValueError):
     """Invalid tool arguments; the message is shown to the LLM so it can correct the call."""
 
 
+SESSION_OPTIONS = f"-c default_transaction_read_only=on -c statement_timeout={STATEMENT_TIMEOUT_MS}"
+
+
 def connect() -> psycopg.Connection:
-    return psycopg.connect(
-        os.environ.get("DATABASE_URL", ""),
-        connect_timeout=10,
-        autocommit=True,
-        options=f"-c default_transaction_read_only=on -c statement_timeout={STATEMENT_TIMEOUT_MS}",
-    )
+    """Read-only autocommit connection used by every read tool."""
+    return psycopg.connect(os.environ.get("DATABASE_URL", ""), connect_timeout=10, autocommit=True,
+                           options=SESSION_OPTIONS)
+
+
+def connect_write() -> psycopg.Connection:
+    """Connection whose single transaction is READ WRITE; for save_planned_event only.
+
+    The session default stays read-only: psycopg opens the transaction with ``BEGIN READ WRITE`` and
+    ``with connect_write() as conn`` commits on success and rolls back on any error. What can be written
+    is limited by the role's grants (INSERT on planned_events only).
+    """
+    conn = psycopg.connect(os.environ.get("DATABASE_URL", ""), connect_timeout=10, autocommit=False,
+                           options=SESSION_OPTIONS)
+    conn.read_only = False
+    return conn
 
 
 def parse_date(value: Optional[str], name: str) -> Optional[date]:

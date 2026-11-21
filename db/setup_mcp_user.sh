@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Creates the read-only PostgreSQL role used by the MCP data server (mcp_server/) and stores its
-# credentials in the OpenShift secret "amalfi-mcp-db". Idempotent: reuses the password if the secret exists.
+# Creates the PostgreSQL role used by the MCP data server (mcp_server/) and stores its credentials in the
+# OpenShift secret "amalfi-mcp-db". Idempotent: reuses the password if the secret exists.
 # The password is generated here and never written to the repo.
-# Prereq: `oc login ...`, db/setup.sh already run. Run from repo root:  bash db/setup_mcp_readonly_user.sh
+# The role is read-only by default; its only write privilege is INSERT of chat events into planned_events
+# (spec section 8.3): transactions, KPIs and owner decisions stay read-only, agent_proposals is invisible.
+# Prereq: `oc login ...`, db/setup.sh already run. Run from repo root:  bash db/setup_mcp_user.sh
 set -euo pipefail
 
 NS="${NS:-autonomous-cfo}"
@@ -25,7 +27,8 @@ fi
 POD=$(oc get pod -n "$NS" -l app=amalfi-db -o jsonpath='{.items[0].metadata.name}')
 echo "==> Creating/updating role $ROLE in pod $POD"
 # SQL goes through stdin so the password never shows up in a process list.
-oc exec -i -n "$NS" "$POD" -- psql -v ON_ERROR_STOP=1 -q -d amalfi <<SQL
+# One transaction: a running MCP server never sees the role without its grants.
+oc exec -i -n "$NS" "$POD" -- psql -v ON_ERROR_STOP=1 -q --single-transaction -U postgres -d amalfi <<SQL
 DO \$\$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
@@ -39,7 +42,14 @@ ALTER ROLE ${ROLE} SET statement_timeout = '10s';
 GRANT CONNECT ON DATABASE amalfi TO ${ROLE};
 GRANT USAGE ON SCHEMA public TO ${ROLE};
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${ROLE};
-GRANT SELECT ON bank_transactions, kpi_snapshots, fixed_obligations, account_balance_anchors TO ${ROLE};
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ${ROLE};
+GRANT SELECT ON bank_transactions, kpi_snapshots, fixed_obligations, account_balance_anchors,
+                planned_events, owner_decisions TO ${ROLE};
+-- The only write: inserting a chat event. Column-level, so the role cannot set id, category, decision_id
+-- or created_at; no UPDATE / DELETE anywhere.
+GRANT INSERT (event_type, date_from, date_to, amount_eur, description, original_utterance, source, as_of_date)
+    ON planned_events TO ${ROLE};
+GRANT USAGE ON SEQUENCE planned_events_id_seq TO ${ROLE};
 SQL
 
-echo "==> Done. Role $ROLE can only SELECT from the data tables (not agent_proposals)."
+echo "==> Done. Role $ROLE: SELECT on the data tables, INSERT on planned_events only (no agent_proposals)."

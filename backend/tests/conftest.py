@@ -84,3 +84,18 @@ def obligations():
 @pytest.fixture(scope="session")
 def anchors():
     return list(ANCHORS)
+
+
+@pytest.fixture(scope="session")
+def ledger(statement):
+    from ledger import build_ledger
+
+    return build_ledger(statement)
+
+
+@pytest.fixture()
+def repo(statement, anchors):
+    """CSV-backed in-memory repository (fresh planned events / decisions per test)."""
+    from fakes import InMemoryRepository
+
+    return InMemoryRepository(statement, anchors)

@@ -71,6 +71,9 @@ metadata:
   name: autonomous-cfo
   labels:
     app: autonomous-cfo
+  annotations:
+    # LLM-backed API calls can take longer than the router's default 30 s.
+    haproxy.router.openshift.io/timeout: 180s
 spec:
   to:
     kind: Service

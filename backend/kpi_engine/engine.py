@@ -30,20 +30,20 @@ INFO = "INFO"
 _SEVERITY_RANK = {INFO: 0, K.WARNING: 1, K.CRITICAL: 2}
 
 LABELS = {
-    "current_cash_balance_eur": (1, "current_cash_balance", "Saldo bieżące (EUR)", "Current cash balance", "EUR"),
-    "forecast_balance_7d_eur": (2, "forecast_cash_balance", "Prognoza salda za 7 dni", "Forecast balance in 7 days", "EUR"),
-    "forecast_balance_14d_eur": (2, "forecast_cash_balance", "Prognoza salda za 14 dni", "Forecast balance in 14 days", "EUR"),
-    "forecast_balance_30d_eur": (2, "forecast_cash_balance", "Prognoza salda za 30 dni", "Forecast balance in 30 days", "EUR"),
-    "forecast_min_balance_30d_eur": (2, "forecast_cash_balance", "Najniższe prognozowane saldo (30 dni)", "Lowest forecast balance (30 days)", "EUR"),
-    "minimum_cash_buffer_eur": (3, "minimum_cash_buffer", "Minimalny bufor gotówki", "Minimum cash buffer", "EUR"),
-    "liquidity_gap_30d_eur": (4, "liquidity_gap", "Luka płynności (30 dni)", "Liquidity gap (30 days)", "EUR"),
-    "projected_overdraft_30d_eur": (4, "liquidity_gap", "Prognozowany debet (30 dni)", "Projected overdraft (30 days)", "EUR"),
-    "deployable_cash_surplus_eur": (5, "deployable_cash_surplus", "Nadwyżka gotówki do ulokowania", "Deployable cash surplus", "EUR"),
-    "net_cash_flow_7d_eur": (6, "net_cash_flow", "Przepływ netto (7 dni)", "Net cash flow (7 days)", "EUR"),
-    "net_cash_flow_30d_eur": (6, "net_cash_flow", "Przepływ netto (30 dni)", "Net cash flow (30 days)", "EUR"),
-    "cash_inflow_trend_pct": (7, "cash_flow_trend", "Trend wpływów (30 vs poprzednie 30 dni)", "Inflow trend (last 30d vs prior 30d)", "%"),
-    "cash_outflow_trend_pct": (7, "cash_flow_trend", "Trend wydatków (30 vs poprzednie 30 dni)", "Outflow trend (last 30d vs prior 30d)", "%"),
-    "fixed_cost_coverage_ratio": (8, "fixed_cost_coverage", "Pokrycie kosztów stałych", "Fixed cost coverage ratio", "ratio"),
+    "current_cash_balance_eur": (1, "current_cash_balance", "Current cash balance", "EUR"),
+    "forecast_balance_7d_eur": (2, "forecast_cash_balance", "Forecast balance in 7 days", "EUR"),
+    "forecast_balance_14d_eur": (2, "forecast_cash_balance", "Forecast balance in 14 days", "EUR"),
+    "forecast_balance_30d_eur": (2, "forecast_cash_balance", "Forecast balance in 30 days", "EUR"),
+    "forecast_min_balance_30d_eur": (2, "forecast_cash_balance", "Lowest forecast balance (30 days)", "EUR"),
+    "minimum_cash_buffer_eur": (3, "minimum_cash_buffer", "Minimum cash buffer", "EUR"),
+    "liquidity_gap_30d_eur": (4, "liquidity_gap", "Liquidity gap (30 days)", "EUR"),
+    "projected_overdraft_30d_eur": (4, "liquidity_gap", "Projected overdraft (30 days)", "EUR"),
+    "deployable_cash_surplus_eur": (5, "deployable_cash_surplus", "Deployable cash surplus", "EUR"),
+    "net_cash_flow_7d_eur": (6, "net_cash_flow", "Net cash flow (7 days)", "EUR"),
+    "net_cash_flow_30d_eur": (6, "net_cash_flow", "Net cash flow (30 days)", "EUR"),
+    "cash_inflow_trend_pct": (7, "cash_flow_trend", "Inflow trend (last 30d vs prior 30d)", "%"),
+    "cash_outflow_trend_pct": (7, "cash_flow_trend", "Outflow trend (last 30d vs prior 30d)", "%"),
+    "fixed_cost_coverage_ratio": (8, "fixed_cost_coverage", "Fixed cost coverage ratio", "ratio"),
 }
 ESTIMATE_GROUPS = {2, 3, 4, 5, 8}
 
@@ -394,9 +394,10 @@ def compute_metrics(
     }
 
     kpi_metadata = []
-    for kpi_id, (number, group, label, label_en, unit) in LABELS.items():
+    for kpi_id, (number, group, label, unit) in LABELS.items():
         kpi_metadata.append({
-            "id": kpi_id, "kpi_number": number, "kpi_group": group, "label": label, "label_en": label_en,
+            # "label_en" duplicates "label" for readers of schema 1.0 snapshots (the MCP server reads it).
+            "id": kpi_id, "kpi_number": number, "kpi_group": group, "label": label, "label_en": label,
             "value": values[kpi_id], "unit": unit, "status": st[kpi_id], "is_estimate": number in ESTIMATE_GROUPS,
             "details": details[kpi_id],
         })
