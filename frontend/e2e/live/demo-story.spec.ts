@@ -120,15 +120,13 @@ test.describe("demo story on the deployed application", () => {
     await openAssistant();
   }
 
-  function explanationBadge(): Locator {
-    return page.getByText(/^(AI explanation|Standard explanation \(AI unavailable\))$/);
-  }
-
   /** The explanation is requested again for every new forecast; wait until the current one has arrived. */
   async function waitForExplanation(): Promise<string> {
     await expect(page.getByText("The assistant is analysing your forecast…")).toBeHidden({ timeout: LLM_TIMEOUT_MS });
-    await expect(explanationBadge()).toBeVisible({ timeout: LLM_TIMEOUT_MS });
-    return explanationBadge().innerText();
+    await expect(page.locator(".explanation")).not.toBeEmpty({ timeout: LLM_TIMEOUT_MS });
+    // Only an explanation written by the AI carries a badge.
+    const writtenByAi = await page.getByText("AI explanation", { exact: true }).isVisible();
+    return writtenByAi ? "AI explanation" : "Standard explanation";
   }
 
   test.beforeAll(async ({ browser }) => {

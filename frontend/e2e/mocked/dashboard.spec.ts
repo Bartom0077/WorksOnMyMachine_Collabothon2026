@@ -154,7 +154,8 @@ test.describe("dashboard", () => {
     await mockApi(page, { recommendation: fallbackRecommendation });
     await page.goto("/");
 
-    await expect(page.getByText("Standard explanation (AI unavailable)")).toBeVisible();
+    await expect(page.locator(".explanation")).not.toBeEmpty();
+    await expect(page.getByText("AI explanation", { exact: true })).toBeHidden();
     // The reason is one click away, inside "Why?".
     const reason = page.getByText("Why no AI text: The language model did not respond in time.");
     await expect(reason).toBeHidden();

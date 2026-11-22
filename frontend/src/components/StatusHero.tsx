@@ -25,19 +25,12 @@ function TrafficLight({ status }: { status: RiskStatus }) {
   );
 }
 
-function ProvenanceBadge({ recommendation }: { recommendation: Recommendation }) {
-  if (recommendation.source === "llm") {
-    return (
-      <span className="badge badge--ai">
-        <Icon name="sparkles" size={14} />
-        AI explanation
-      </span>
-    );
-  }
+/** Marks an explanation the AI wrote; the standard (fallback) text carries no badge. */
+function AiBadge() {
   return (
-    <span className="badge badge--fallback" title={recommendation.fallback_reason ?? undefined}>
-      <Icon name="database" size={14} />
-      Standard explanation (AI unavailable)
+    <span className="badge badge--ai">
+      <Icon name="sparkles" size={14} />
+      AI explanation
     </span>
   );
 }
@@ -125,9 +118,9 @@ export function StatusHero({ dashboard, recommendation }: Props) {
             </h2>
           </div>
           <Explanation recommendation={recommendation} />
-          {explanation !== null ? (
+          {explanation !== null && explanation.source === "llm" ? (
             <p className="hero__provenance">
-              <ProvenanceBadge recommendation={explanation} />
+              <AiBadge />
             </p>
           ) : null}
           <details className="disclosure">
