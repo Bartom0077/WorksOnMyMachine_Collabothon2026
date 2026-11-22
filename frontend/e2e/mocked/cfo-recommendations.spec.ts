@@ -289,8 +289,8 @@ test.describe("CFO recommendations", () => {
   test("a fallback answer shows the code texts without an error", async ({ page }) => {
     await loadSurplus(page, { adviceRecommendation: fallbackAdviceRecommendation(surplusAdvice) });
 
-    await expect(section(page).getByText("Standard summary (AI unavailable)")).toBeVisible();
     await expect(section(page).getByText("Recommendations for your spare cash")).toBeVisible();
+    await expect(section(page).getByText("AI summary", { exact: true })).toHaveCount(0);
     await expect(card(page, CODE_TITLES.T1)).toContainText(proposal("T1").description);
     await expect(card(page, CODE_TITLES.I1)).toContainText(proposal("I1").description);
     await expect(section(page).getByRole("alert")).toHaveCount(0);
@@ -617,7 +617,7 @@ test.describe("CFO recommendations", () => {
 
   test("the confirmation states the exact amount apart from a code title that already names it", async ({ page }) => {
     await loadSurplus(page, { adviceRecommendation: fallbackAdviceRecommendation(surplusAdvice) });
-    await expect(section(page).getByText("Standard summary (AI unavailable)")).toBeVisible();
+    await expect(section(page).getByText("Recommendations for your spare cash")).toBeVisible();
 
     await card(page, CODE_TITLES.T1).getByRole("checkbox").check();
     await card(page, CODE_TITLES.I1).getByRole("checkbox").check();

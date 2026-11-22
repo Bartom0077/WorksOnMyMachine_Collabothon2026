@@ -20,19 +20,12 @@ interface Props {
   baseline: BalancePoint[];
 }
 
-function ProvenanceBadge({ summary }: { summary: AdviceRecommendation["summary"] }) {
-  if (summary.source === "llm") {
-    return (
-      <span className="badge badge--ai">
-        <Icon name="sparkles" size={14} />
-        AI summary
-      </span>
-    );
-  }
+/** Marks a summary the AI wrote; the standard (fallback) text carries no badge. */
+function AiBadge() {
   return (
-    <span className="badge badge--fallback" title={summary.fallback_reason ?? undefined}>
-      <Icon name="database" size={14} />
-      Standard summary (AI unavailable)
+    <span className="badge badge--ai">
+      <Icon name="sparkles" size={14} />
+      AI summary
     </span>
   );
 }
@@ -57,7 +50,7 @@ function Summary({ recommendation }: Pick<Props, "recommendation">) {
       {data ? (
         <>
           <p className="advice__headline">
-            {data.summary.headline} <ProvenanceBadge summary={data.summary} />
+            {data.summary.headline} {data.summary.source === "llm" ? <AiBadge /> : null}
           </p>
           <p>{lead}</p>
           {rest !== "" ? (

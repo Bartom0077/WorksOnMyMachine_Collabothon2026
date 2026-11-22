@@ -125,9 +125,6 @@ export function StatusHero({ dashboard, recommendation }: Props) {
           ) : null}
           <details className="disclosure">
             <summary>Why?</summary>
-            {explanation !== null && explanation.source === "fallback" && explanation.fallback_reason !== null ? (
-              <p className="muted">Why no AI text: {explanation.fallback_reason}</p>
-            ) : null}
             <RiskDriversTable riskDrivers={dashboard.risk_drivers} riskWindow={risk.risk_window} />
           </details>
         </div>

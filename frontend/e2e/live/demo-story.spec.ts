@@ -484,9 +484,9 @@ test.describe("demo story on the deployed application", () => {
     await expect(section.getByRole("status", { name: "Loading the summary of the recommendations" })).toBeHidden({
       timeout: LLM_TIMEOUT_MS,
     });
-    const badge = section.getByText(/^(AI summary|Standard summary \(AI unavailable\))$/);
-    await expect(badge).toBeVisible({ timeout: LLM_TIMEOUT_MS });
-    console.log(`[CFO summary] ${await badge.innerText()}`);
+    // Only a summary written by the AI carries a badge.
+    const writtenByAi = await section.getByText("AI summary", { exact: true }).isVisible();
+    console.log(`[CFO summary] ${writtenByAi ? "AI summary" : "Standard summary"}`);
     await waitForExplanation();
     await captureKeyState("13-cfo-recommendations");
   });

@@ -150,18 +150,14 @@ test.describe("dashboard", () => {
     await expect(page.getByText("AI explanation", { exact: true })).toBeVisible();
   });
 
-  test("labels a fallback explanation as not written by the AI", async ({ page }) => {
+  test("shows a fallback explanation without an AI badge or a failure notice", async ({ page }) => {
     await mockApi(page, { recommendation: fallbackRecommendation });
     await page.goto("/");
 
     await expect(page.locator(".explanation")).not.toBeEmpty();
     await expect(page.getByText("AI explanation", { exact: true })).toBeHidden();
-    // The reason is one click away, inside "Why?".
-    const reason = page.getByText("Why no AI text: The language model did not respond in time.");
-    await expect(reason).toBeHidden();
     await page.getByText("Why?", { exact: true }).click();
-    await expect(reason).toBeVisible();
-    await expect(page.getByText("AI explanation", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("The language model did not respond in time.")).toHaveCount(0);
   });
 
   test("the Why? toggle reveals the fixed costs inside the risk window", async ({ page }) => {
